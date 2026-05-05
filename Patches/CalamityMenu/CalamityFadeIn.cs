@@ -27,9 +27,16 @@ public static class CalamityFadeIn
     private static TextMeshPro    _logoTmp;
     private static float          _startTime;
     private static bool           _done;
+    private static bool           _alreadyPlayed;
 
     public static void Build(Transform root)
     {
+        // App-lifetime flag: only play on the very first menu load. Subsequent menu
+        // re-entries (after Multi → lobby → Exit, freeplay return, etc.) should NOT
+        // replay the "End K not" reveal.
+        if (_alreadyPlayed) return;
+        _alreadyPlayed = true;
+
         Reset();
         _startTime = Time.realtimeSinceStartup;
 

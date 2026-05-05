@@ -5,6 +5,11 @@ namespace EndKnot.Patches.CalamityMenu;
 
 public static class CalamityLogo
 {
+    // App-lifetime flag: subtitle and divider show only on the first menu load.
+    // AMONG US text logo is rebuilt every time because reparenting vanilla LOGO-AU
+    // across scenes leaves it in inconsistent renderer state.
+    private static bool _subtitleShown;
+
     public static void Build(Transform logoLayer)
     {
         Logger.Info($"Build start, logoLayer={(logoLayer != null ? logoLayer.name : "NULL")}, fontVanilla={(CalamityFonts.Vanilla != null ? "set" : "null")}", "CalamityLogo");
@@ -36,35 +41,42 @@ public static class CalamityLogo
         var auLogo = FindAULogo();
         if (auLogo != null) auLogo.SetActive(false);
 
-        // ── "End K not" subtitle ─────────────────────────────────────────
-        var subGo = new GameObject("CalamitySubtitle");
-        subGo.transform.SetParent(logoLayer);
-        subGo.transform.localPosition = new Vector3(0f, 1.45f, 0f);
+        // ── "End K not" subtitle + divider (startup only) ────────────────
+        // User intent: Multi → lobby → Exit shouldn't show "End K not" again.
+        // The AMONG US logo above is allowed to repeat (it replaces a vanilla element
+        // that's invisible after scene reload), but the brand subtitle is once-only.
+        if (!_subtitleShown)
+        {
+            _subtitleShown = true;
 
-        var sub = subGo.AddComponent<TextMeshPro>();
-        sub.text             = "End K not";
-        sub.fontSize         = 1.8f;
-        sub.alignment        = TextAlignmentOptions.Center;
-        sub.fontStyle        = FontStyles.Bold;
-        sub.characterSpacing = 6f;
-        sub.color            = new Color(0.65f, 0.70f, 0.90f, 0.90f);
-        sub.outlineColor     = new Color32(10, 5, 40, 200);
-        sub.outlineWidth     = 0.18f;
-        sub.sortingOrder     = 20;
-        CalamityFonts.Apply(sub);
+            var subGo = new GameObject("CalamitySubtitle");
+            subGo.transform.SetParent(logoLayer);
+            subGo.transform.localPosition = new Vector3(0f, 1.45f, 0f);
 
-        // ── Thin divider ─────────────────────────────────────────────────
-        var lineGo = new GameObject("CalamityDivider");
-        lineGo.transform.SetParent(logoLayer);
-        lineGo.transform.localPosition = new Vector3(0f, 1.25f, 0f);
+            var sub = subGo.AddComponent<TextMeshPro>();
+            sub.text             = "End K not";
+            sub.fontSize         = 1.8f;
+            sub.alignment        = TextAlignmentOptions.Center;
+            sub.fontStyle        = FontStyles.Bold;
+            sub.characterSpacing = 6f;
+            sub.color            = new Color(0.65f, 0.70f, 0.90f, 0.90f);
+            sub.outlineColor     = new Color32(10, 5, 40, 200);
+            sub.outlineWidth     = 0.18f;
+            sub.sortingOrder     = 20;
+            CalamityFonts.Apply(sub);
 
-        var line = lineGo.AddComponent<TextMeshPro>();
-        line.text         = "──────────────────";
-        line.fontSize     = 1.2f;
-        line.alignment    = TextAlignmentOptions.Center;
-        line.color        = new Color(0.40f, 0.45f, 0.65f, 0.50f);
-        line.sortingOrder = 20;
-        CalamityFonts.Apply(line);
+            var lineGo = new GameObject("CalamityDivider");
+            lineGo.transform.SetParent(logoLayer);
+            lineGo.transform.localPosition = new Vector3(0f, 1.25f, 0f);
+
+            var line = lineGo.AddComponent<TextMeshPro>();
+            line.text         = "──────────────────";
+            line.fontSize     = 1.2f;
+            line.alignment    = TextAlignmentOptions.Center;
+            line.color        = new Color(0.40f, 0.45f, 0.65f, 0.50f);
+            line.sortingOrder = 20;
+            CalamityFonts.Apply(line);
+        }
     }
 
     private static GameObject FindAULogo()

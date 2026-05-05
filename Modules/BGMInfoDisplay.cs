@@ -35,6 +35,7 @@ public static class BGMInfoDisplay
             displayText.text = string.IsNullOrEmpty(author)
                 ? $"♪ {title}"
                 : $"♪ {title} <color=#aaaaaa>-{author}</color>";
+            displayText.ForceMeshUpdate();
 
             if (activeFade != null) Main.Instance.StopCoroutine(activeFade);
             activeFade = Main.Instance.StartCoroutine(FadeRoutine());
@@ -98,10 +99,27 @@ public static class BGMInfoDisplay
             ? UnityEngine.Object.Instantiate(template, parent, false)
             : UnityEngine.Object.Instantiate(template);
 
+        // Cloned TMP inherits the template's mesh; without clearing first,
+        // the next SetActive(true) flashes the original button label
+        // (e.g. "終了") for 1+ frame before our text rebuilds.
+        displayText.gameObject.SetActive(false);
+        displayText.text = string.Empty;
+
         displayText.gameObject.name = "BGMInfoDisplay";
-        displayText.alignment = useHudPosition ? TextAlignmentOptions.Right : TextAlignmentOptions.Left;
+        displayText.DestroyTranslator(); // remove vanilla TextTranslator that would re-localize our title
+
+        // In menu mode, detach from any layout-controlled parent and strip AspectPosition
+        // so our explicit world-position placement isn't overridden each frame.
+        if (!useHudPosition)
+        {
+            displayText.transform.SetParent(null, false);
+            var ap = displayText.GetComponent<AspectPosition>();
+            if (ap != null) UnityEngine.Object.Destroy(ap);
+        }
+
+        displayText.alignment = useHudPosition ? TextAlignmentOptions.Right : TextAlignmentOptions.CaplineRight;
         displayText.fontStyle = FontStyles.Normal;
-        float size = useHudPosition ? 1.6f : 2.4f;
+        float size = useHudPosition ? 1.6f : 3f;
         displayText.fontSize = displayText.fontSizeMax = displayText.fontSizeMin = size;
         displayText.color = Color.white;
         displayText.transform.localScale = Vector3.one;
@@ -109,12 +127,25 @@ public static class BGMInfoDisplay
         if (useHudPosition)
             displayText.transform.localPosition = new Vector3(0f, -0.6f, -10f);
         else
-            displayText.transform.position = new Vector3(-4.6f, 2.7f, 0f); // world space, top-left
+        {
+            // Right-anchored RectTransform so the title grows leftward from (5.2, 2.9).
+            var rt = displayText.GetComponent<RectTransform>();
+            if (rt != null)
+            {
+                rt.pivot = new Vector2(1f, 1f);
+                rt.sizeDelta = new Vector2(6f, 0.8f);
+                var anchor = new Vector2(0.5f, 0.5f);
+                rt.anchorMax = anchor;
+                rt.anchorMin = anchor;
+            }
+            displayText.transform.position = new Vector3(5.2f, 2.9f, 0f); // world space, top-right (matches 5/5 18:38 build)
+        }
 
         displayText.overflowMode = TextOverflowModes.Overflow;
         displayText.enableWordWrapping = false;
         displayText.sortingOrder = 100;
         displayText.gameObject.SetActive(false);
+        displayText.ForceMeshUpdate();
         Logger.Info($"Credit display created, useHud={useHudPosition}, pos={displayText.transform.position}", "BGMInfoDisplay");
     }
 
