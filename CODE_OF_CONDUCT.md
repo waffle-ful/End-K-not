@@ -1,6 +1,6 @@
 # Code of Conduct
 
-This Code of Conduct applies to all interactions involving the End Knot community: this GitHub repository, the project Discord, and lobbies hosted with the mod.
+This Code of Conduct applies to all interactions involving the End K not community: this GitHub repository, the project Discord, and lobbies hosted with the mod.
 
 The goal is simple: **everyone should be able to participate, contribute, and have fun without being mistreated.**
 
@@ -34,4 +34,4 @@ Anonymous reports are not acted on, but reports made privately to the maintainer
 
 The project maintainer (and Discord moderators, where applicable) will decide outcomes case by case. Possible actions include warnings, temporary bans, or permanent bans from the project's spaces.
 
-By participating in End Knot, you agree to follow this Code of Conduct.
+By participating in End K not, you agree to follow this Code of Conduct.

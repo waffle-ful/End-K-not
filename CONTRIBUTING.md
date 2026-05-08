@@ -1,6 +1,6 @@
-# Contributing to End Knot
+# Contributing to End K not
 
-Thanks for your interest in contributing! End Knot is a small personal fork — contributions are welcome but the bar for being merged is "the maintainer agrees and has time to review".
+Thanks for your interest in contributing! End K not is a small personal fork — contributions are welcome but the bar for being merged is "the maintainer agrees and has time to review".
 
 ## Getting in touch
 

@@ -1,6 +1,6 @@
 # Support
 
-End Knot is a small personal fork of [Endless Host Roles (EHR)](https://github.com/Gurge44/EndlessHostRoles). Support is best-effort.
+End K not is a small personal fork of [Endless Host Roles (EHR)](https://github.com/Gurge44/EndlessHostRoles). Support is best-effort.
 
 ## Where to ask
 
@@ -14,7 +14,7 @@ End Knot is a small personal fork of [Endless Host Roles (EHR)](https://github.c
 
 Please include:
 
-- End Knot version (visible in the lobby version display)
+- End K not version (visible in the lobby version display)
 - Among Us version
 - Steps to reproduce
 - Logs from `Among Us/BepInEx/`:
@@ -24,4 +24,4 @@ Please include:
 
 ## Upstream issues
 
-Bugs that also reproduce on stock EHR are best reported [upstream](https://github.com/Gurge44/EndlessHostRoles/issues). End Knot does not fix upstream EHR bugs unless they specifically affect the End Knot use case.
+Bugs that also reproduce on stock EHR are best reported [upstream](https://github.com/Gurge44/EndlessHostRoles/issues). End K not does not fix upstream EHR bugs unless they specifically affect the End K not use case.

@@ -2432,7 +2432,7 @@ public static class Utils
             {
                 name = Options.GetSuffixMode() switch
                 {
-                    SuffixModes.EndKnot => $"{name} (<color={Main.ModColor}>End Knot v{Main.PluginDisplayVersion}</color>)",
+                    SuffixModes.EndKnot => $"{name} (<color={Main.ModColor}>End K not v{Main.PluginDisplayVersion}</color>)",
                     SuffixModes.Streaming => $"{name} (<color={Main.ModColor}>{GetString("SuffixMode.Streaming")}</color>)",
                     SuffixModes.Recording => $"{name} (<color={Main.ModColor}>{GetString("SuffixMode.Recording")}</color>)",
                     SuffixModes.RoomHost => $"{name} (<color={Main.ModColor}>{GetString("SuffixMode.RoomHost")}</color>)",

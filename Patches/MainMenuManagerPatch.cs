@@ -158,7 +158,7 @@ public static class MainMenuManagerPatch
         MgLogo = logoObject.AddComponent<SpriteRenderer>();
         logoTransform.localPosition = new(2f, -0.5f, 1f);
         logoTransform.localScale *= 1.2f;
-        // TODO: drop a PNG at Resources/Images/EHR-Icon.png (or rename and update this path) once an End Knot logo is ready.
+        // TODO: drop a PNG at Resources/Images/EHR-Icon.png (or rename and update this path) once an End K not logo is ready.
         // While the asset is missing, LoadSprite logs one error and returns null — the title screen renders without a logo.
         MgLogo.sprite = Utils.LoadSprite("EndKnot.Resources.Images.EHR-Icon.png", 400f);
 

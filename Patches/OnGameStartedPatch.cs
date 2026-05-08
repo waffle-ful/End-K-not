@@ -545,7 +545,7 @@ internal static class StartGameHostPatch
 
             if (loadingBarLogo)
             {
-                // TODO: drop a PNG at Resources/Images/EHR-Icon.png (or rename and update this path) once an End Knot logo is ready.
+                // TODO: drop a PNG at Resources/Images/EHR-Icon.png (or rename and update this path) once an End K not logo is ready.
                 // While the asset is missing, LoadSprite logs one error and returns null — the loading bar renders without a logo.
                 loadingBarLogo.sprite = Utils.LoadSprite("EndKnot.Resources.Images.EHR-Icon.png", 390f);
                 loadingBarLogo.SetNativeSize();

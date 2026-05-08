@@ -134,7 +134,7 @@ public class ClientControlGUI : MonoBehaviour
             normal = { background = RoundedTexture(winW, winH, 22, new Color(0.06f, 0.07f, 0.15f, 1f), new Color(0.10f, 0.16f, 0.30f, 1f)) }
         };
 
-        // "End Knot Client Controls" heading
+        // "End K not Client Controls" heading
         _sTitleBar = new GUIStyle
         {
             fontSize  = FontSize + 3,
@@ -364,7 +364,7 @@ public class ClientControlGUI : MonoBehaviour
 
         GUI.Label(
             new Rect(_windowRect.x, _windowRect.y + Padding * 0.6f, _windowRect.width, ButtonHeight * 0.55f),
-            "End Knot Client Controls",
+            "End K not Client Controls",
             _sTitleBar
         );
 

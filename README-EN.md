@@ -1,4 +1,4 @@
-# End Knot
+# End K not
 
 [日本語](README.md)
 
@@ -6,14 +6,14 @@
 
 ## About this mod
 
-**End Knot** is an unofficial personal fork of [Endless Host Roles (EHR)](https://github.com/Gurge44/EndlessHostRoles) for Among Us. On top of EHR's **450+ roles and 16 game modes**, End Knot ports roles from [TownOfHost-K (TOHK)](https://github.com/KYMario/TownOfHost-K) onto EHR's RoleBase system.
+**End K not** is an unofficial personal fork of [Endless Host Roles (EHR)](https://github.com/Gurge44/EndlessHostRoles) for Among Us. On top of EHR's **450+ roles and 16 game modes**, End K not ports roles from [TownOfHost-K (TOHK)](https://github.com/KYMario/TownOfHost-K) onto EHR's RoleBase system.
 
 Only the lobby host needs to install the mod — other players can join and enjoy the additional roles without installing anything.
 
 This mod is unofficial and is **not affiliated with or endorsed by Innersloth**. **Please do not contact Innersloth regarding any issues with this mod.**
 
 > [!WARNING]
-> End Knot is in **alpha**. Some roles are untested and several features are works-in-progress. Please report bugs and suggestions on [GitHub Issues](../../issues) or our [Discord](https://discord.gg/sEYAFzD3a).
+> End K not is in **alpha**. Some roles are untested and several features are works-in-progress. Please report bugs and suggestions on [GitHub Issues](../../issues) or our [Discord](https://discord.gg/sEYAFzD3a).
 
 Supported Among Us version: **2026.3.31**
 
@@ -22,7 +22,7 @@ Supported Among Us version: **2026.3.31**
 - **EHR + TOHK role merge** — EHR's full role catalog plus a growing set of roles ported from TOHK and re-implemented on RoleBase
 - **Calamity-themed main menu** *(work in progress)* — A custom Calamity-style title screen
 - **BGM system** — Replaceable background music for menu / lobby / in-task / climax / meeting / result. Default tracks bundled
-- **External communication fully disabled** — Update checks, achievements API, online presets, news fetching, and other upstream EHR network calls are **all disabled**. End Knot makes no outbound network requests while running
+- **External communication fully disabled** — Update checks, achievements API, online presets, news fetching, and other upstream EHR network calls are **all disabled**. End K not makes no outbound network requests while running
 - **GPL-3.0 open source** — Full source available; you may study, modify, and redistribute under GPL-3.0
 
 ## Installation
@@ -53,7 +53,7 @@ Edit `bgm_titles.json` to control title / author display while a BGM plays. File
 
 This project is licensed under the **GNU General Public License v3.0**. See [`LICENSE`](./LICENSE) for details.
 
-End Knot is a derivative of [Endless Host Roles](https://github.com/Gurge44/EndlessHostRoles). **Modifications since April 2026** were made by waffle-ful; the modification history is tracked in this repository's git log and [`CHANGELOG.md`](./CHANGELOG.md), in compliance with GPL-3.0 §5.
+End K not is a derivative of [Endless Host Roles](https://github.com/Gurge44/EndlessHostRoles). **Modifications since April 2026** were made by waffle-ful; the modification history is tracked in this repository's git log and [`CHANGELOG.md`](./CHANGELOG.md), in compliance with GPL-3.0 §5.
 
 ## Credits
 
@@ -66,4 +66,4 @@ For per-role porting credits, see [`CHANGELOG.md`](./CHANGELOG.md) and individua
 
 ---
 
-Among Us is © 2018–2026 Innersloth LLC. End Knot is not affiliated with or endorsed by Innersloth. Portions of the materials used are property of Innersloth LLC.
+Among Us is © 2018–2026 Innersloth LLC. End K not is not affiliated with or endorsed by Innersloth. Portions of the materials used are property of Innersloth LLC.

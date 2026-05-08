@@ -27,7 +27,7 @@ using UnityEngine.Networking;
 
 namespace EndKnot;
 
-[BepInPlugin(PluginGuid, "End Knot", PluginVersion)]
+[BepInPlugin(PluginGuid, "End K not", PluginVersion)]
 [BepInIncompatibility("jp.ykundesu.supernewroles")]
 [BepInIncompatibility("MalumMenu")]
 [BepInIncompatibility("com.crewmod.oficial")]
@@ -57,7 +57,7 @@ public class Main : BasePlugin
     public const float MinSpeed = 0.0001f;
 
     // == プログラム設定 / Program Config ==
-    public const string ModName = "End Knot";
+    public const string ModName = "End K not";
     public const string ModColor = "#00ffff";
     public const bool AllowPublicRoom = true;
     public const string ForkId = "EndKnot";
@@ -279,7 +279,7 @@ public class Main : BasePlugin
         try
         {
             // Migrate legacy data/config from upstream EHR and the earlier KnotHost rename.
-            // Safe to keep indefinitely: no-op once End Knot folders exist.
+            // Safe to keep indefinitely: no-op once End K not folders exist.
             string root = DataPath;
             string dst = Path.Combine(root, "EndKnot_DATA");
             foreach (string legacy in new[] { "EHR_DATA", "KnotHost_DATA" })

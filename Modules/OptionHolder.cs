@@ -1617,7 +1617,7 @@ public static class Options
 
         #region EHRSettings
 
-        MainLoadingText = "Building End Knot settings";
+        MainLoadingText = "Building End K not settings";
 
         ModLanguage = new StringOptionItem(19308, "ModLanguage", Enum.GetNames<ModLanguages>(), 0, TabGroup.SystemSettings)
             .SetHeader(true);
