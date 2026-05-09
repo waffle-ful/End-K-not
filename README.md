@@ -45,8 +45,8 @@
 
 ## コミュニティ
 
-- **Discord** : https://discord.gg/sEYAFzD3a — 質問・バグ報告・雑談
-- **Issues** : [GitHub Issues](../../issues)
+- **Discord** : https://discord.gg/sEYAFzD3a — バグ報告・質問・雑談（推奨）
+- **Issues** : [GitHub Issues](../../issues) — 確認が遅れる場合があります
 - [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) | [`CONTRIBUTING.md`](./CONTRIBUTING.md) | [`SECURITY.md`](./SECURITY.md) | [`SUPPORT.md`](./SUPPORT.md)
 
 ## ライセンス

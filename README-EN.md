@@ -45,8 +45,8 @@ Edit `bgm_titles.json` to control title / author display while a BGM plays. File
 
 ## Community
 
-- **Discord**: https://discord.gg/sEYAFzD3a — questions, bug reports, general chat
-- **Issues**: [GitHub Issues](../../issues)
+- **Discord**: https://discord.gg/sEYAFzD3a — bug reports, questions, general chat (preferred)
+- **Issues**: [GitHub Issues](../../issues) — may take a while to respond
 - [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) | [`CONTRIBUTING.md`](./CONTRIBUTING.md) | [`SECURITY.md`](./SECURITY.md) | [`SUPPORT.md`](./SUPPORT.md)
 
 ## License
