@@ -790,6 +790,7 @@ internal static class MurderPlayerPatch
 
         Main.PlayerStates[target.PlayerId].SetDead();
         target.SetRealKiller(killer, true);
+        Akazukin.OnAnyMurder(killer, target);
         CountAlivePlayers(true);
 
         if (Options.CurrentGameMode == CustomGameMode.Standard)

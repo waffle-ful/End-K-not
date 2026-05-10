@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using EndKnot.Roles;
 using UnityEngine;
 
 namespace EndKnot.Modules.Extensions;
@@ -33,7 +34,7 @@ public static class FastVector2
 
         foreach (PlayerControl pc in Main.EnumerateAlivePlayerControls())
         {
-            if (pc.inVent || !predicate(pc)) continue;
+            if (pc.inVent || Akazukin.IsPseudoDead(pc.PlayerId) || !predicate(pc)) continue;
             
             Vector2 p = pc.Pos();
             float dx = p.x - origin.x;
@@ -129,7 +130,7 @@ public static class FastVector2
 
         foreach (PlayerControl pc in Main.EnumerateAlivePlayerControls())
         {
-            if (pc.inVent || !predicate(pc)) continue;
+            if (pc.inVent || Akazukin.IsPseudoDead(pc.PlayerId) || !predicate(pc)) continue;
             
             Vector2 p = pc.Pos();
             float dx = p.x - origin.x;
@@ -165,7 +166,7 @@ public static class FastVector2
 
         foreach (PlayerControl pc in Main.EnumerateAlivePlayerControls())
         {
-            if (pc.inVent || pc.PlayerId == source.PlayerId || !predicate(pc)) continue;
+            if (pc.inVent || pc.PlayerId == source.PlayerId || Akazukin.IsPseudoDead(pc.PlayerId) || !predicate(pc)) continue;
             
             Vector2 p = pc.Pos();
             float dx = p.x - origin.x;
@@ -203,7 +204,7 @@ public static class FastVector2
 
         foreach (PlayerControl pc in Main.EnumerateAlivePlayerControls())
         {
-            if (pc.inVent || pc.PlayerId == source.PlayerId || !predicate(pc)) continue;
+            if (pc.inVent || pc.PlayerId == source.PlayerId || Akazukin.IsPseudoDead(pc.PlayerId) || !predicate(pc)) continue;
             
             Vector2 p = pc.Pos();
             float dx = p.x - origin.x;
@@ -242,7 +243,7 @@ public static class FastVector2
 
         foreach (PlayerControl pc in Main.EnumerateAlivePlayerControls())
         {
-            if (pc.inVent || !predicate(pc)) continue;
+            if (pc.inVent || Akazukin.IsPseudoDead(pc.PlayerId) || !predicate(pc)) continue;
             
             Vector2 p = pc.Pos();
             float dx = p.x - origin.x;

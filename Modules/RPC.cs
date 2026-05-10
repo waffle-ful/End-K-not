@@ -177,7 +177,8 @@ public enum CustomRPC
     TMGSync,
     BedWarsSync,
     DeathraceSync,
-    SyncLobbyState
+    SyncLobbyState,
+    SyncAkazukinPseudoDeath
 
     // The total number of RPCs must not exceed 255
     // Because HandleRpc accepts Rpc in byte (max 255) system, and it will be impossible to use int
@@ -977,6 +978,11 @@ internal static class RPCHandlerPatch
                 case CustomRPC.SetPelicanEtenNum:
                 {
                     Pelican.ReceiveRPC(reader);
+                    break;
+                }
+                case CustomRPC.SyncAkazukinPseudoDeath:
+                {
+                    Akazukin.ReceiveRPC(reader);
                     break;
                 }
                 case CustomRPC.SetDoomsayerProgress:

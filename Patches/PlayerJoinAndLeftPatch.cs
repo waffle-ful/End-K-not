@@ -612,6 +612,8 @@ internal static class OnPlayerLeftPatch
                 PlayerState state = Main.PlayerStates[id];
                 if (state.deathReason == PlayerState.DeathReason.etc) state.deathReason = PlayerState.DeathReason.Disconnected;
 
+                Akazukin.OnAnyDisconnect(id);
+
                 if (!state.IsDead) state.SetDead();
 
                 Utils.AfterPlayerDeathTasks(data.Character, GameStates.IsMeeting, true);

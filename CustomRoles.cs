@@ -557,6 +557,7 @@ public enum CustomRoles
 
     // ????
     ForceFielder,
+    Akazukin,
     Convict,
 
 

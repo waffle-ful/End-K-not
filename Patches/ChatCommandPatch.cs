@@ -3695,6 +3695,12 @@ internal static class RpcSendChatPatch
 {
     public static bool Prefix(PlayerControl __instance, string chatText, ref bool __result)
     {
+        if (Akazukin.IsPseudoDead(__instance.PlayerId))
+        {
+            __result = false;
+            return false;
+        }
+
         if (string.IsNullOrWhiteSpace(chatText))
         {
             __result = false;

@@ -71,6 +71,8 @@ internal static class ExileControllerWrapUpPatch
                 Main.PlayerStates[exiled.PlayerId].SetDead();
         }
 
+        if (exiled != null) Akazukin.OnAnyExile(exiled.PlayerId);
+
         Witch.RemoveSpelledPlayer();
 
         Swapper.OnExileFinish();

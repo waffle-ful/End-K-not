@@ -1036,6 +1036,7 @@ internal static class CustomRolesHelper
                 CustomRoles.AmateurTeller => true,
                 CustomRoles.JackalHadouHo => true,
                 CustomRoles.MassMedia => true,
+                CustomRoles.Akazukin => true,
                 CustomRoles.Romantic when Romantic.DesignationMethod.GetValue() != 0 => true,
 
                 _ => false
@@ -1604,6 +1605,7 @@ internal static class CustomRolesHelper
                 CustomRoles.Vigilante => RoleOptionType.Crewmate_Killing,
                 CustomRoles.Adrenaline => RoleOptionType.Crewmate_Power,
                 CustomRoles.Adventurer => RoleOptionType.Crewmate_Power,
+                CustomRoles.Akazukin => RoleOptionType.Crewmate_Power,
                 CustomRoles.Alchemist => RoleOptionType.Crewmate_Power,
                 CustomRoles.Astral => RoleOptionType.Crewmate_Power,
                 CustomRoles.CopyCat => RoleOptionType.Crewmate_Power,
