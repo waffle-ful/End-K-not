@@ -3419,7 +3419,7 @@ internal static class ChatCommands
             return;
         }
 
-        if (GameStates.InGame && (Silencer.ForSilencer.Contains(player.PlayerId) || (Main.PlayerStates[player.PlayerId].Role is Dad { IsEnable: true } dad && dad.UsingAbilities.Contains(Dad.Ability.GoForMilk))) && player.IsAlive())
+        if (GameStates.InGame && (Silencer.ForSilencer.Contains(player.PlayerId) || Akazukin.IsPseudoDead(player.PlayerId) || (Main.PlayerStates[player.PlayerId].Role is Dad { IsEnable: true } dad && dad.UsingAbilities.Contains(Dad.Ability.GoForMilk))) && player.IsAlive())
         {
             ChatManager.SendPreviousMessagesToAll();
             canceled = true;
