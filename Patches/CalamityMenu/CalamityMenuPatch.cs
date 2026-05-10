@@ -8,8 +8,6 @@ namespace EndKnot.Patches.CalamityMenu;
 [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.Start))]
 public static class CalamityMenuPatch
 {
-    private static AccountTab _accountTab;
-
     // Hide vanilla 10-button strip BEFORE Start runs its sign-in / icon-loading
     // coroutines. SetActive(false) inside Postfix is too late — vanilla code
     // touches transforms during Start() and races with our suppression.
@@ -51,7 +49,6 @@ public static class CalamityMenuPatch
         CalamityMenuState.VanillaSuppressed = false;
         CalamityVisibility.Reset();
         CalamityButtons.ResetPopoverShowState();
-        _accountTab = null;
 
         // Order matters: Fonts → MenuRoot → FadeIn → Suppressor → visuals → Buttons → FeatureBridge.
         // FadeIn lives ABOVE the other layers so its overlay covers them as they're being built;
@@ -106,10 +103,5 @@ public static class CalamityMenuPatch
         EndKnotFeatureBridge.Tick();
         CalamityVisibility.Tick();
         CalamityFadeIn.Tick();
-
-        // AccountTab re-enables itself via async sign-in events; keep it suppressed
-        _accountTab ??= UnityEngine.Object.FindObjectOfType<AccountTab>();
-        if (_accountTab != null && _accountTab.gameObject.activeSelf)
-            _accountTab.gameObject.SetActive(false);
     }
 }

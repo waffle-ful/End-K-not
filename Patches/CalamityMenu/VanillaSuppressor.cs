@@ -36,13 +36,23 @@ public static class VanillaSuppressor
         // mm.OpenGameModeMenu() through the existing RightPanel slide animation.
 
         // Account / social UI that sits above MainMenuButtons
-        Object.FindObjectOfType<AccountTab>()?.gameObject.SetActive(false);
         DisableByName("FriendsButton");
         DisableByName("NewRequest");
 
-        // AccountManager root container (re-enables on async sign-in events; we
-        // also kill the whole hierarchy so its children can't pop back).
-        Object.FindObjectOfType<AccountManager>()?.gameObject.SetActive(false);
+        // AccountTab (top-left FriendCode/EOS name widget) is a child of AccountManager.
+        // Reparent it out before AccountManager is disabled, otherwise it disappears with
+        // its parent. Also kill its AccountWindow popup so the sign-in dialog can't open.
+        var accountManager = Object.FindObjectOfType<AccountManager>();
+        if (accountManager != null)
+        {
+            var accountTab = accountManager.transform.FindChild("AccountTab");
+            if (accountTab != null)
+            {
+                accountTab.FindChild("AccountWindow")?.gameObject.SetActive(false);
+                accountTab.SetParent(accountManager.transform.parent);
+            }
+            accountManager.gameObject.SetActive(false);
+        }
 
         // StoreMenu (vanilla cosmetics store) sits behind the menu and bleeds
         // through with the Calamity background.
