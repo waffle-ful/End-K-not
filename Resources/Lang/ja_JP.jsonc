@@ -2285,6 +2285,8 @@
   "VampireBiteButtonText": "噛む",
   "VampireKillCooldown": "噛みつくクールダウン",
   "VampireKillDelay": "噛殺の遅れ",
+  "VampireSpeedDown": "噛んだ相手を徐々に減速させる",
+  "VampireSpeedDownStartTime": "減速が始まるまでの時間",
   "VampireTargetDead": "ターゲットが死亡した",
   "Venerer": "ヴェネラー",
   "VenererInfo": "キルで能力を積み重ねる",

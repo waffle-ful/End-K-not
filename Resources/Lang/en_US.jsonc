@@ -2729,6 +2729,8 @@
   "VampireBiteButtonText": "Bite",
   "VampireKillCooldown": "Bite Cooldown",
   "VampireKillDelay": "Bite Kill Delay",
+  "VampireSpeedDown": "Slow Down Bitten Targets",
+  "VampireSpeedDownStartTime": "Slow Down Start Delay",
   "VampireTargetDead": "Target died",
   "Venerer": "Venerer",
   "VenererInfo": "Stack Abilites By Killing",

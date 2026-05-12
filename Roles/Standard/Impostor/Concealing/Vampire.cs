@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using AmongUs.GameOptions;
 using EndKnot.Modules;
 using EndKnot.Modules.Extensions;
+using UnityEngine;
 using static EndKnot.Translator;
 
 namespace EndKnot.Roles;
@@ -11,17 +13,23 @@ public class Vampire : RoleBase
 {
     private const int Id = 4500;
     private static readonly List<byte> PlayerIdList = [];
-    private static readonly HashSet<byte> BittenPlayers = [];
 
     private static OptionItem Cooldown;
     private static OptionItem OptionKillDelay;
     public static OptionItem OptionCanKillNormally;
+    private static OptionItem OptionSpeedDown;
+    private static OptionItem OptionSpeedDownStartTime;
+
+    private readonly Dictionary<byte, float> BittenPlayers = [];
+    private readonly Dictionary<byte, float> OriginalSpeeds = [];
 
     private bool CanKillNormally;
     private bool CanVent;
     private bool IsPoisoner;
     private float KillCooldown;
     private float KillDelay;
+    private bool SpeedDown;
+    private float SpeedDownStartTime;
 
     private byte VampireId;
 
@@ -41,12 +49,18 @@ public class Vampire : RoleBase
 
         OptionCanKillNormally = new BooleanOptionItem(Id + 11, "CanKillNormally", true, TabGroup.ImpostorRoles)
             .SetParent(Options.CustomRoleSpawnChances[CustomRoles.Vampire]);
+
+        OptionSpeedDown = new BooleanOptionItem(Id + 12, "VampireSpeedDown", true, TabGroup.ImpostorRoles)
+            .SetParent(Options.CustomRoleSpawnChances[CustomRoles.Vampire]);
+
+        OptionSpeedDownStartTime = new FloatOptionItem(Id + 13, "VampireSpeedDownStartTime", new(0f, 120f, 0.5f), 1f, TabGroup.ImpostorRoles)
+            .SetParent(OptionSpeedDown)
+            .SetValueFormat(OptionFormat.Seconds);
     }
 
     public override void Init()
     {
         PlayerIdList.Clear();
-        BittenPlayers.Clear();
     }
 
     public override void Add(byte playerId)
@@ -62,6 +76,8 @@ public class Vampire : RoleBase
             KillDelay = OptionKillDelay.GetFloat();
             CanVent = true;
             CanKillNormally = OptionCanKillNormally.GetBool();
+            SpeedDown = OptionSpeedDown.GetBool();
+            SpeedDownStartTime = OptionSpeedDownStartTime.GetFloat();
         }
         else
         {
@@ -69,7 +85,12 @@ public class Vampire : RoleBase
             KillDelay = Poisoner.OptionKillDelay.GetFloat();
             CanVent = Poisoner.CanVent.GetBool();
             CanKillNormally = Poisoner.CanKillNormally.GetBool();
+            SpeedDown = false;
+            SpeedDownStartTime = 0f;
         }
+
+        BittenPlayers.Clear();
+        OriginalSpeeds.Clear();
     }
 
     public override void Remove(byte playerId)
@@ -110,16 +131,71 @@ public class Vampire : RoleBase
         {
             killer.SetKillCooldown(KillCooldown + KillDelay);
             killer.RPCPlayCustomSound("Bite");
-            
-            BittenPlayers.Add(target.PlayerId);
 
-            _ = new CountdownTimer(KillDelay, () =>
-            {
-                if (target == null || !target.IsAlive()) return;
-                KillBitten(killer, target);
-                BittenPlayers.Remove(target.PlayerId);
-            }, onCanceled: BittenPlayers.Clear);
+            if (BittenPlayers.ContainsKey(target.PlayerId)) return;
+
+            BittenPlayers[target.PlayerId] = 0f;
+            if (Main.AllPlayerSpeed.TryGetValue(target.PlayerId, out float origSpeed))
+                OriginalSpeeds[target.PlayerId] = origSpeed;
         }
+    }
+
+    public override void OnFixedUpdate(PlayerControl pc)
+    {
+        if (!AmongUsClient.Instance.AmHost || !GameStates.IsInTask) return;
+        if (BittenPlayers.Count == 0) return;
+
+        foreach (var (targetId, elapsed) in BittenPlayers.ToArray())
+        {
+            PlayerControl target = Utils.GetPlayerById(targetId);
+            if (target == null || target.Data.Disconnected || !target.IsAlive())
+            {
+                RestoreSpeed(targetId);
+                BittenPlayers.Remove(targetId);
+                continue;
+            }
+
+            float newElapsed = elapsed + Time.fixedDeltaTime;
+
+            if (newElapsed >= KillDelay)
+            {
+                RestoreSpeed(targetId);
+                KillBitten(pc, target);
+                BittenPlayers.Remove(targetId);
+                continue;
+            }
+
+            BittenPlayers[targetId] = newElapsed;
+
+            if (!SpeedDown || IsPoisoner) continue;
+            if (newElapsed < SpeedDownStartTime) continue;
+            if (!OriginalSpeeds.TryGetValue(targetId, out float origSpeed)) continue;
+
+            float rampWindow = KillDelay - SpeedDownStartTime;
+            if (rampWindow <= 0f) continue;
+
+            float sp = origSpeed * ((KillDelay - newElapsed) / rampWindow);
+            if (KillDelay - newElapsed <= 0.5f) sp = Main.MinSpeed;
+
+            if (sp >= Main.MinSpeed && sp < origSpeed)
+            {
+                Main.AllPlayerSpeed[targetId] = sp;
+                target.MarkDirtySettings();
+            }
+        }
+    }
+
+    private void RestoreSpeed(byte targetId)
+    {
+        if (!OriginalSpeeds.TryGetValue(targetId, out float origSpeed))
+        {
+            OriginalSpeeds.Remove(targetId);
+            return;
+        }
+
+        Main.AllPlayerSpeed[targetId] = origSpeed;
+        Utils.GetPlayerById(targetId)?.MarkDirtySettings();
+        OriginalSpeeds.Remove(targetId);
     }
 
     private void KillBitten(PlayerControl vampire, PlayerControl target, bool meeting = false)
@@ -143,12 +219,13 @@ public class Vampire : RoleBase
     {
         try
         {
-            foreach (byte targetId in BittenPlayers)
+            foreach (byte targetId in BittenPlayers.Keys.ToArray())
             {
                 try
                 {
                     PlayerControl target = Utils.GetPlayerById(targetId);
                     PlayerControl vampire = Utils.GetPlayerById(VampireId);
+                    RestoreSpeed(targetId);
                     KillBitten(vampire, target, meeting: true);
                 }
                 catch (Exception e) { Utils.ThrowException(e); }
@@ -157,6 +234,7 @@ public class Vampire : RoleBase
         catch (Exception e) { Utils.ThrowException(e); }
 
         BittenPlayers.Clear();
+        OriginalSpeeds.Clear();
     }
 
     public override void SetButtonTexts(HudManager hud, byte id)
