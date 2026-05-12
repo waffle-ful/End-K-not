@@ -1,0 +1,33 @@
+namespace EndKnot.Modules.YouTubeChat;
+
+// オプション一式。SystemSettings タブ配下、ID 範囲 44600〜44604。
+// Enabled は default OFF。BGMShowInfo 隣接に並べる想定。
+public static class YouTubeChatOptions
+{
+    public const int OptionIdBase = 44600;
+
+    public static OptionItem Enabled;
+    public static OptionItem DisplayCount;
+    public static OptionItem PollingInterval;
+    public static OptionItem HideDuringMeetings;
+    public static OptionItem ShowAuthor;
+
+    public static void SetupCustomOption()
+    {
+        Enabled = new BooleanOptionItem(OptionIdBase + 0, "YouTubeChatEnable", false, TabGroup.SystemSettings)
+            .SetHeader(true);
+
+        DisplayCount = new IntegerOptionItem(OptionIdBase + 1, "YouTubeChatDisplayCount", new(1, 15, 1), 5, TabGroup.SystemSettings)
+            .SetParent(Enabled);
+
+        PollingInterval = new IntegerOptionItem(OptionIdBase + 2, "YouTubeChatPollingInterval", new(3, 30, 1), 5, TabGroup.SystemSettings)
+            .SetParent(Enabled)
+            .SetValueFormat(OptionFormat.Seconds);
+
+        HideDuringMeetings = new BooleanOptionItem(OptionIdBase + 3, "YouTubeChatHideDuringMeetings", true, TabGroup.SystemSettings)
+            .SetParent(Enabled);
+
+        ShowAuthor = new BooleanOptionItem(OptionIdBase + 4, "YouTubeChatShowAuthor", true, TabGroup.SystemSettings)
+            .SetParent(Enabled);
+    }
+}

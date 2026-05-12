@@ -1636,6 +1636,8 @@ public static class Options
 
         BGMManager.SetupCustomOption();
 
+        Modules.YouTubeChat.YouTubeChatOptions.SetupCustomOption();
+
         LoadingPercentage = 61;
 
         AutoKickStart = new BooleanOptionItem(19310, "AutoKickStart", false, TabGroup.SystemSettings);

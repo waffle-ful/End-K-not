@@ -9,6 +9,7 @@ using AmongUs.GameOptions;
 using Assets.CoreScripts;
 using EndKnot.Gamemodes;
 using EndKnot.Modules;
+using EndKnot.Modules.YouTubeChat;
 using EndKnot.Patches;
 using EndKnot.Roles;
 using HarmonyLib;
@@ -252,6 +253,7 @@ internal static class ChatCommands
             new("NeutralInfo", "", Command.UsageLevels.Everyone, Command.UsageTimes.Always, NeutralInfoCommand, true, false),
             new("PlayerInfo", "[id]", Command.UsageLevels.Everyone, Command.UsageTimes.Always, PlayerInfoCommand, true, false, [GetString("CommandArgs.PlayerInfo.Id")]),
             new("TimeLimit", "", Command.UsageLevels.Everyone, Command.UsageTimes.InGame, TimeLimitCommand, true, false),
+            new("YT", "{action}", Command.UsageLevels.Host, Command.UsageTimes.Always, YTCommand, true, false, [GetString("CommandArgs.YT.Action")]),
             
             // Commands with action handled elsewhere
             new("Guess", "{id} {role}", Command.UsageLevels.Everyone, Command.UsageTimes.InMeeting, (_, _, _) => { }, true, false, [GetString("CommandArgs.Guess.Id"), GetString("CommandArgs.Guess.Role")]),
@@ -550,6 +552,70 @@ internal static class ChatCommands
     private static void TimeLimitCommand(PlayerControl player, string text, string[] args)
     {
         Utils.SendMessage("\n", player.PlayerId, Options.EnableGameTimeLimit.GetBool() ? $"{Options.GameTimeLimit.GetInt() - Main.GameTimer.Elapsed.TotalSeconds:N0}s {GetString("RemainingText.Suffix")}" : "<size=4>∞</size>");
+    }
+
+    private static void YTCommand(PlayerControl player, string text, string[] args)
+    {
+        // /yt <url>     -> ストリーム開始
+        // /yt off       -> 停止
+        // /yt status    -> 現在の状態
+        // /yt clear     -> overlay クリア（履歴削除）
+        if (!YouTubeChatOptions.Enabled.GetBool())
+        {
+            Utils.SendMessage(GetString("YouTubeChat.NotEnabled"), player.PlayerId);
+            return;
+        }
+
+        if (args.Length < 2)
+        {
+            Utils.SendMessage(GetString("YouTubeChat.Usage"), player.PlayerId);
+            return;
+        }
+
+        string sub = args[1].Trim();
+        switch (sub.ToLowerInvariant())
+        {
+            case "off":
+            case "stop":
+                YouTubeChatManager.Stop();
+                YouTubeChatOverlay.Reset();
+                Main.YouTubeStreamUrl.Value = "";
+                Utils.SendMessage(GetString("YouTubeChat.Stopped"), player.PlayerId);
+                return;
+
+            case "status":
+                if (YouTubeChatManager.IsActive)
+                    Utils.SendMessage(string.Format(GetString("YouTubeChat.Status.Active"), YouTubeChatManager.CurrentVideoId), player.PlayerId);
+                else
+                    Utils.SendMessage(GetString("YouTubeChat.Status.Inactive"), player.PlayerId);
+                return;
+
+            case "clear":
+                YouTubeChatOverlay.Reset();
+                return;
+        }
+
+        // それ以外は URL として扱う。args[1..] を結合（URL に空白は無いはずだが念のため）
+        string url = string.Join(' ', args, 1, args.Length - 1).Trim();
+        string err = YouTubeChatManager.Start(url);
+        if (err != null)
+        {
+            Utils.SendMessage(GetString($"YouTubeChat.Error.{err}"), player.PlayerId);
+            return;
+        }
+
+        // 永続化
+        Main.YouTubeStreamUrl.Value = url;
+
+        // 初回利用警告（ConfigEntry で記憶、一度出したら出さない）
+        if (!Main.YouTubeChatWarned.Value)
+        {
+            Main.YouTubeChatWarned.Value = true;
+            Utils.SendMessage(GetString("YouTubeChat.FirstTimeWarning"), player.PlayerId);
+        }
+
+        Utils.SendMessage(string.Format(GetString("YouTubeChat.Started"), YouTubeChatManager.CurrentVideoId), player.PlayerId);
+        YouTubeChatOverlay.EnsureSubscribed();
     }
 
     private static void PlayerInfoCommand(PlayerControl player, string text, string[] args)

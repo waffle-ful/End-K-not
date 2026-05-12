@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Linq;
 using EndKnot.Gamemodes;
+using EndKnot.Modules.YouTubeChat;
 using EndKnot.Patches;
 using HarmonyLib;
 using InnerNet;
@@ -50,7 +51,11 @@ public static class FixedUpdateCaller
                 HudManagerPatch.Postfix(hudManager);
                 Zoom.Postfix();
                 HudSpritePatch.Postfix(hudManager);
+                YouTubeChatOverlay.Tick();
             }
+
+            // YouTube chat polling は HUD の有無と無関係に進める（ロビーから動かす前提）
+            YouTubeChatManager.Tick(UnityEngine.Time.fixedDeltaTime);
 
             if (!PlayerControl.LocalPlayer) return;
 
