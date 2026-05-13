@@ -1140,7 +1140,7 @@ namespace EndKnot
         {
             OwnerId = ownerId;
             Position = position;
-            CreateNetObject("<size=252%><line-height=67%>" +
+            CreateNetObject("<size=126%><line-height=67%>" +
                 "<#5a5a5a>█<#5a5a5a>█<#5a5a5a>█<#5a5a5a>█<#5a5a5a>█<#5a5a5a>█<br>" +
                 "<#5a5a5a>█<#999999>█<#999999>█<#999999>█<#999999>█<#5a5a5a>█<br>" +
                 "<#5a5a5a>█<#999999>█<#bbbbbb>█<#bbbbbb>█<#999999>█<#5a5a5a>█<br>" +

@@ -1317,7 +1317,6 @@
   "SandboxMaxBlocks": "Maximum Blocks at Once",
   "SandboxPlaceCooldown": "Place Cooldown",
   "SandboxBlockRadius": "Block Hitbox Radius",
-  "SandboxEjectMargin": "Eject Distance Margin",
   "SandboxBlockPlaced": "<#8cffff>Block placed</color>",
   "SandboxCooldownActive": "<#ff4444>Place cooldown active</color>",
   "Scanner": "Scanner",

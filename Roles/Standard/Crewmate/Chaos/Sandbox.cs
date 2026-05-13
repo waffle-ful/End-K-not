@@ -14,21 +14,22 @@ public class Sandbox : RoleBase
     private static OptionItem MaxBlocks;
     public static OptionItem PlaceCooldown;
     private static OptionItem BlockRadius;
-    private static OptionItem EjectMargin;
 
     // Sandbox.PlayerId -> 現在生存している block リスト (順序保持で FIFO Despawn)
     internal static Dictionary<byte, List<SandboxBlock>> ActiveBlocks = [];
     // 会議跨ぎの位置データ (owner -> position list)
     public static Dictionary<byte, List<Vector2>> SavedBlockPositions = [];
-    // Eject 連続発動防止 (target -> last eject time)
-    private static Dictionary<byte, float> LastEjectTime = [];
     // Pet スパム防止 (owner -> last place time)
     private static Dictionary<byte, float> LastPlaceTime = [];
 
-    private const float EjectCooldownSec = 0.5f;
+    // プレイヤー本体の半径 (Among Us の標準プレイヤー collider 相当)。
+    // GetPlayersInRange はプレイヤー中心点で距離を測るため、見た目の端で止めるにはこの分を足す必要がある。
+    private const float PlayerColliderRadius = 0.25f;
+    // ブロック中心 → エッジ位置の追加バッファ (再侵入防止の極小オフセット)
+    private const float EdgeBuffer = 0.05f;
 
-    // ForceFielder.cs:22-30 と同じ 12 方向の eject 候補角 (ラジアン)
-    private static readonly float[] EjectAngleOffsets =
+    // 12 方向のプッシュ候補角 (壁がある場合の迂回先)
+    private static readonly float[] PushAngleOffsets =
     {
         0f,
         0.5236f, -0.5236f,
@@ -51,11 +52,7 @@ public class Sandbox : RoleBase
             .SetParent(Options.CustomRoleSpawnChances[CustomRoles.Sandbox])
             .SetValueFormat(OptionFormat.Seconds);
 
-        BlockRadius = new FloatOptionItem(Id + 4, "SandboxBlockRadius", new(0.5f, 2f, 0.1f), 1f, TabGroup.CrewmateRoles)
-            .SetParent(Options.CustomRoleSpawnChances[CustomRoles.Sandbox])
-            .SetValueFormat(OptionFormat.Multiplier);
-
-        EjectMargin = new FloatOptionItem(Id + 5, "SandboxEjectMargin", new(0.1f, 1.5f, 0.1f), 0.5f, TabGroup.CrewmateRoles)
+        BlockRadius = new FloatOptionItem(Id + 4, "SandboxBlockRadius", new(0.2f, 1.5f, 0.05f), 0.5f, TabGroup.CrewmateRoles)
             .SetParent(Options.CustomRoleSpawnChances[CustomRoles.Sandbox])
             .SetValueFormat(OptionFormat.Multiplier);
     }
@@ -65,7 +62,6 @@ public class Sandbox : RoleBase
         On = false;
         ActiveBlocks = [];
         SavedBlockPositions = [];
-        LastEjectTime = [];
         LastPlaceTime = [];
     }
 
@@ -125,21 +121,17 @@ public class Sandbox : RoleBase
         if (!pc.IsAlive() || !GameStates.IsInTask || ExileController.Instance) return;
         if (!ActiveBlocks.TryGetValue(pc.PlayerId, out var blocks) || blocks.Count == 0) return;
 
-        float radius = BlockRadius.GetFloat();
-        float ejectDist = radius + EjectMargin.GetFloat();
-        float now = Time.time;
+        // BlockRadius はブロックの「視覚半径」。プレイヤー中心がここに来た時点では
+        // プレイヤーの体は既にブロックに食い込んでいるので、検出/押し戻し共にプレイヤー半径を加算する。
+        float triggerRadius = BlockRadius.GetFloat() + PlayerColliderRadius;
 
         foreach (var block in blocks)
         {
             Vector2 center = block.Position;
-            foreach (PlayerControl target in FastVector2.GetPlayersInRange(center, radius, _ => true))
+            foreach (PlayerControl target in FastVector2.GetPlayersInRange(center, triggerRadius, _ => true))
             {
-                byte tid = target.PlayerId;
                 if (!target.IsAlive()) continue;
-                if (LastEjectTime.TryGetValue(tid, out float lastT) && now - lastT < EjectCooldownSec) continue;
-
-                EjectFromBlock(target, center, ejectDist);
-                LastEjectTime[tid] = now;
+                PushToEdge(target, center, triggerRadius);
             }
         }
     }
@@ -162,7 +154,6 @@ public class Sandbox : RoleBase
             blocks.Clear();
         }
 
-        LastEjectTime.Clear();
         LastPlaceTime.Clear();
     }
 
@@ -196,37 +187,28 @@ public class Sandbox : RoleBase
         }, 1f, "Sandbox.RespawnBlocks");
     }
 
-    // ForceFielder.cs:172-198 の EjectFromField を Sandbox 用にコピー。
-    // block 中心から外向きに 12 方向の空きを探して TP で弾き出す。
-    private static void EjectFromBlock(PlayerControl target, Vector2 center, float ejectDist)
+    // ブロック中心からプレイヤーへの向きへ「半径+極小バッファ」までスナップする。
+    // 弾き出しではなく毎フレームのエッジスナップなので、プレイヤーは壁に張り付いた挙動になる。
+    // 壁が邪魔して TP できない場合のみ 12 方向の代替角を試す。
+    private static void PushToEdge(PlayerControl target, Vector2 center, float radius)
     {
         Vector2 outward = target.Pos() - center;
-        if (outward == Vector2.zero) outward = Vector2.up;
+        if (outward.sqrMagnitude < 0.0001f) outward = Vector2.up;
         Vector2 baseDir = outward.normalized;
         Collider2D collider = target.Collider;
+        float pushDist = radius + EdgeBuffer;
 
-        foreach (float offset in EjectAngleOffsets)
+        foreach (float offset in PushAngleOffsets)
         {
             Vector2 candidateDir = Rotate(baseDir, offset);
-            Vector2 candidate = center + candidateDir * ejectDist;
+            Vector2 candidate = center + candidateDir * pushDist;
 
             if (PhysicsHelpers.AnythingBetween(collider, target.Pos(), candidate, Constants.ShipOnlyMask, false))
                 continue;
 
-            target.TP(candidate, noCheckState: true, log: false);
-            if (!target.IsInsideMap()) TPToFallback(target);
+            target.TP(candidate, log: false);
             return;
         }
-
-        TPToFallback(target);
-    }
-
-    private static void TPToFallback(PlayerControl target)
-    {
-        Vector2 playerPos = target.Pos();
-        Vector2 closestSpawn = FastVector2.TryGetClosest(playerPos, RandomSpawn.SpawnMap.GetSpawnMap().Positions.Values, out Vector2 sp) ? sp : new(50f, 50f);
-        Vector3 closestVent = target.GetClosestVent()?.transform.position ?? closestSpawn;
-        target.TP(Vector2.Distance(playerPos, closestVent) < Vector2.Distance(playerPos, closestSpawn) ? closestVent : closestSpawn, noCheckState: true);
     }
 
     private static Vector2 Rotate(Vector2 v, float radians)

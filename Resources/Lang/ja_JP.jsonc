@@ -1313,7 +1313,6 @@
   "SandboxMaxBlocks": "同時設置できるブロック数の上限",
   "SandboxPlaceCooldown": "設置クールダウン",
   "SandboxBlockRadius": "ブロックの当たり判定半径",
-  "SandboxEjectMargin": "弾き出し距離のマージン",
   "SandboxBlockPlaced": "<#8cffff>ブロックを設置した</color>",
   "SandboxCooldownActive": "<#ff4444>クールダウン中だ</color>",
   "Scanner": "スキャナー",
