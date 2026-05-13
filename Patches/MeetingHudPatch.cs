@@ -726,19 +726,24 @@ internal static class MeetingHudStartPatch
                 sb.Replace(searchStr, role.ToColoredString());
                 sb.Replace(searchStr.ToLower(), role.ToColoredString());
 
-                foreach (CustomRoles subRole in Main.PlayerStates[pc.PlayerId].SubRoles)
-                {
-                    sb.Append($"\n\n{subRole.ToColoredString()} {Utils.GetRoleMode(subRole)} {GetString($"{subRole}InfoLong").FixRoleName(subRole)}");
-                    string searchSubStr = GetString(subRole.ToString());
-                    sb.Replace(searchSubStr, subRole.ToColoredString());
-                    sb.Replace(searchSubStr.ToLower(), subRole.ToColoredString());
-                }
-
                 if (settings.Length > 0) roleDescMsgs.Add(new("\n", pc.PlayerId, settings.ToString()));
                 if (role.UsesPetInsteadOfKill()) roleDescMsgs.Add(new("\n", pc.PlayerId, GetString("UsesPetInsteadOfKillNotice")));
                 if (pc.UsesMeetingShapeshift()) roleDescMsgs.Add(new("\n", pc.PlayerId, GetString("UsesMeetingShapeshiftNotice")));
 
                 roleDescMsgs.Add(new(sb.ToString(), pc.PlayerId, titleSb.ToString()));
+
+                // Send each subrole (addon) as its own titled chat box so a vanilla recipient
+                // sees the addon name in the chat-bubble header instead of buried in a
+                // continuation chunk whose title still shows the main role.
+                foreach (CustomRoles subRole in Main.PlayerStates[pc.PlayerId].SubRoles)
+                {
+                    string subBody = GetString($"{subRole}InfoLong").FixRoleName(subRole);
+                    string subTitle = $"{subRole.ToColoredString()} {Utils.GetRoleMode(subRole)}";
+                    string searchSubStr = GetString(subRole.ToString());
+                    subBody = subBody.Replace(searchSubStr, subRole.ToColoredString())
+                                     .Replace(searchSubStr.ToLower(), subRole.ToColoredString());
+                    roleDescMsgs.Add(new(subBody, pc.PlayerId, subTitle));
+                }
             }
 
             LateTask.New(() =>

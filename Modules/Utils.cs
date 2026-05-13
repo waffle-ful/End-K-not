@@ -1800,9 +1800,53 @@ public static class Utils
         { "black",  (  0,   0,   0) }
     };
 
+    // Inter-message delay used by SendMultipleMessages.
+    // AU 2026 anti-cheat kicks the host with reason=Hacking when 3+ title-bearing
+    // SendMessages fire on the same frame to a vanilla client (the RpcCalls.SetName
+    // title trick balloons into ~12 RPCs / multi-KB burst per frame). Spreading the
+    // burst over real time keeps each frame's outgoing packet rate within the
+    // server's tolerance. 0.4s × N msgs is fast enough that role descriptions /
+    // draft announcements still arrive comfortably before the meeting / lobby state changes.
+    private const float MultiMessageGapSeconds = 0.4f;
+
     public static void SendMultipleMessages(this IEnumerable<Message> messages, MessageImportance importance = MessageImportance.Medium)
     {
-        messages.Do(x => SendMessage(x.Text, x.SendTo, x.Title, importance: importance));
+        var list = messages as IList<Message> ?? messages.ToList();
+
+        if (list.Count == 0) return;
+
+        if (list.Count == 1)
+        {
+            Message single = list[0];
+            SendMessage(single.Text, single.SendTo, single.Title, importance: importance);
+            return;
+        }
+
+        Main.Instance.StartCoroutine(SendMultipleMessagesThrottled(list, importance));
+    }
+
+    private static IEnumerator SendMultipleMessagesThrottled(IList<Message> messages, MessageImportance importance)
+    {
+        for (var i = 0; i < messages.Count; i++)
+        {
+            Message msg = messages[i];
+            SendMessage(msg.Text, msg.SendTo, msg.Title, importance: importance);
+
+            if (i < messages.Count - 1)
+                yield return new WaitForSecondsRealtime(MultiMessageGapSeconds);
+        }
+    }
+
+    private static bool RecipientIncludesVanillaClient(byte sendTo, PlayerControl receiver)
+    {
+        if (sendTo != byte.MaxValue)
+            return receiver != null && !receiver.IsModdedClient();
+
+        foreach (PlayerControl pc in Main.EnumeratePlayerControls())
+            if (!pc.IsModdedClient())
+                return true;
+
+        return false;
     }
 
     public static CustomRpcSender SendMessage(string text, byte sendTo = byte.MaxValue, string title = "", bool noSplit = false, CustomRpcSender writer = null, bool final = false, bool multiple = false, MessageImportance importance = MessageImportance.Medium, bool addToHistory = true, bool force = false, bool noNumberSplit = false, bool numberSplitFinal = false, [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0)
@@ -1938,6 +1982,16 @@ public static class Utils
                 writer = CustomRpcSender.Create("Utils.SendMessage(1)", sendOption);
 
             int fullRpcSizeLimit = Options.MessageRpcSizeLimit.GetInt();
+
+            // AU 2026 vanilla anti-cheat self-disconnects with reason=Hacking when it receives
+            // a single SetName+SendChat+SetName packet larger than ~1KB. The default 1400 ceiling
+            // sits squarely in the danger zone (the option description itself admits "Higher limit
+            // = increased risk of disconnects"). When the recipient is — or includes — a vanilla
+            // client, clamp the per-packet ceiling to a safe sub-1KB value so the line-by-line
+            // splitter in this method emits multiple ~500B packets instead of one ~1.2KB packet.
+            if (RecipientIncludesVanillaClient(sendTo, receiver))
+                fullRpcSizeLimit = Math.Min(fullRpcSizeLimit, 700);
+
             int textRpcSize = text.Length * 2;
             int titleRpcSize = title.Length * 2 + 4;
             int resetNameRpcSize = sender.Data.PlayerName.Length * 2 + 4;
