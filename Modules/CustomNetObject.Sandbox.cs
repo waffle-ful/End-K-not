@@ -10,14 +10,10 @@ namespace EndKnot
         {
             OwnerId = ownerId;
             Position = position;
-            CreateNetObject("<size=126%><line-height=67%>" +
-                "<#5a5a5a>█<#5a5a5a>█<#5a5a5a>█<#5a5a5a>█<#5a5a5a>█<#5a5a5a>█<br>" +
-                "<#5a5a5a>█<#999999>█<#999999>█<#999999>█<#999999>█<#5a5a5a>█<br>" +
-                "<#5a5a5a>█<#999999>█<#bbbbbb>█<#bbbbbb>█<#999999>█<#5a5a5a>█<br>" +
-                "<#5a5a5a>█<#999999>█<#bbbbbb>█<#bbbbbb>█<#999999>█<#5a5a5a>█<br>" +
-                "<#5a5a5a>█<#999999>█<#999999>█<#999999>█<#999999>█<#5a5a5a>█<br>" +
-                "<#5a5a5a>█<#5a5a5a>█<#5a5a5a>█<#5a5a5a>█<#5a5a5a>█<#5a5a5a>█<br>" +
-                "</line-height></size>", position);
+            // 単一 ▣ (入れ子四角) 文字を大 <size>% で描画。
+            // 旧 6×6 グラデーション (~430 byte packet) を ~50 byte に圧縮。
+            // ▣ は中央に小四角が入った構造で、平板な ■ より「ブロック」感がある
+            CreateNetObject("<size=380%><color=#888888>▣</color></size>", position);
         }
 
         // 固定位置のため毎フレーム SnapTo を送らない (帯域節約)
