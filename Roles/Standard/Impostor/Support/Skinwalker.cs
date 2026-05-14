@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using System.Linq;
 using AmongUs.GameOptions;
 using EndKnot.Modules;
-using EndKnot.Patches;
 using Hazel;
 using UnityEngine;
 using static EndKnot.Options;
@@ -134,7 +133,6 @@ public class Skinwalker : RoleBase
         OriginalLevel[reporter.PlayerId] = reporter.Data.PlayerLevel;
 
         body.enabled = false;
-        ReportDeadBodyPatch.AlreadyReportedBodies.Add(target.PlayerId);
 
         NetworkedPlayerInfo.PlayerOutfit targetOutfit = Camouflage.PlayerSkins.GetValueOrDefault(target.PlayerId, tpc.CurrentOutfit);
         var newOutfit = new NetworkedPlayerInfo.PlayerOutfit().Set(
@@ -176,8 +174,6 @@ public class Skinwalker : RoleBase
         if (tpc != null)
             Utils.RpcCreateDeadBody(pos, (byte)tpc.Data.DefaultOutfit.ColorId, tpc);
 
-        ReportDeadBodyPatch.AlreadyReportedBodies.Remove(targetId);
-
         WornCorpsePos.Remove(pc.PlayerId);
         WornCorpseTargetId.Remove(pc.PlayerId);
         OriginalOutfit.Remove(pc.PlayerId);
@@ -198,8 +194,6 @@ public class Skinwalker : RoleBase
 
         if (tpc != null && Main.IntroDestroyed)
             Utils.RpcCreateDeadBody(pos, (byte)tpc.Data.DefaultOutfit.ColorId, tpc);
-
-        ReportDeadBodyPatch.AlreadyReportedBodies.Remove(targetId);
 
         WornCorpsePos.Remove(pc.PlayerId);
         WornCorpseTargetId.Remove(pc.PlayerId);

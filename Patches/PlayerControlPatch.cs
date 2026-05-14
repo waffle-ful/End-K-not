@@ -1119,7 +1119,8 @@ internal static class ReportDeadBodyPatch
                     || (killer && killer.Is(CustomRoles.Goddess))
                     || Main.PlayerStates[target.PlayerId].deathReason == PlayerState.DeathReason.Gambled
                     || killerRole == CustomRoles.Scavenger
-                    || Cleaner.CleanerBodies.Contains(target.PlayerId))
+                    || Cleaner.CleanerBodies.Contains(target.PlayerId)
+                    || Skinwalker.WornCorpseTargetId.ContainsValue(target.PlayerId))
                 {
                     Notify("UnreportableBody");
                     return false;
