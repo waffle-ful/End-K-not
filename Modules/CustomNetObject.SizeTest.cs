@@ -12,9 +12,11 @@ namespace EndKnot
 
         public SizeTestCNO(Vector2 position, int sizePercent, string label)
         {
-            // <size>% は 1 文字に対して直接適用。label は識別用 (size 値) を 〇 の下に小さく
+            // <font="VCR SDF"><line-height=67%> ラップは AdventurerItem 等の動作実績パターン。
+            // 〇 (U+3007) は VCR SDF に無く fallback で size 不変になる事案を観測したため、
+            // ○ (○ U+25CB) を使用 (Adventurer Grouping アイコンと同じ)
             CreateNetObject(
-                $"<size={sizePercent}%><color=#4488ff>〇</color></size>",
+                $"<size={sizePercent}%><font=\"VCR SDF\"><line-height=67%><color=#4488ff>○</color></line-height></font></size>",
                 position);
             Active.Add(this);
         }
