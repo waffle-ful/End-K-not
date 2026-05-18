@@ -71,7 +71,9 @@ internal static class LoadingScreen
             if (HintHideTimer <= 15f) HintHideTimer += Time.deltaTime;
 
             PlayerControl lp = PlayerControl.LocalPlayer;
-            if (!lp) return;
+            if (!lp || !lp.MyPhysics || lp.MyPhysics.Animations == null) return;
+            if (AmongUsClient.Instance == null) return;
+            if (!HudManager.InstanceExists || !HudManager.Instance.Chat) return;
 
             PlayerAnimations anims = lp.MyPhysics.Animations;
 
@@ -89,6 +91,7 @@ internal static class LoadingScreen
 
             if (LoadingAnimation)
             {
+                if (ModManager.Instance == null || !ModManager.Instance.ModStamp) return;
                 Vector3 basePos = ModManager.Instance.ModStamp.transform.position;
 
                 float x = basePos.x - 9.8f;
@@ -111,10 +114,10 @@ internal static class LoadingScreen
                 case true when !ErrorText.HasHint:
                     if (HintHideTimer > 15f) NewHint();
                     HintHideTimer = 0f;
-                    ErrorText.Instance.AddError(ErrorCode.LoadingHint);
+                    if (ErrorText.Instance != null) ErrorText.Instance.AddError(ErrorCode.LoadingHint);
                     break;
             }
         }
-        catch (Exception ex) { Logger.Error(ex.ToString(), "LoadingScreen.Update"); }
+        catch (Exception ex) { Logger.Warn(ex.ToString(), "LoadingScreen.Update"); }
     }
 }

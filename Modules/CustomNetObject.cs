@@ -306,7 +306,7 @@ namespace EndKnot
             IEnumerator CoRoutine()
             {
                 bool tooEarly = !Main.IntroDestroyed || Utils.TimeStamp - IntroCutsceneDestroyPatch.IntroDestroyTS < 10;
-                
+
                 if (Options.CurrentGameMode == CustomGameMode.Standard && (!GameStates.InGame || tooEarly))
                 {
                     if (GameStates.InGame && tooEarly)
