@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using HarmonyLib;
 using InnerNet;
+using UnityEngine;
 
 namespace EndKnot.Modules;
 
@@ -34,6 +35,10 @@ internal static class LobbyShare
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(HttpTimeoutSeconds) };
 
+    // Throttle for /api/update — minimum interval between live player-count PATCHes.
+    // Discord rate-limits PATCH on a single message; 5s leaves plenty of headroom.
+    private const float UpdateThrottleSeconds = 5f;
+
     private static string activeCode;
     private static string activeFcHash;
     private static volatile bool announceSucceeded;
@@ -41,6 +46,11 @@ internal static class LobbyShare
     // OnLobbyDestroyed to distinguish "lobby → ship transition" (skip /api/close)
     // from "host actually left the lobby" (fire /api/close).
     private static volatile bool inGame;
+    // Last player count sent via /api/update (or /api/announce baseline). -1 sentinel
+    // until the first announce fires, so MaybeUpdatePlayerCount doesn't try to PATCH
+    // before there's even an embed to PATCH.
+    private static int lastSentPlayerCount = -1;
+    private static float lastUpdateAt;
     // pendingNotification: staged from background HTTP completion; drained on the
     // main thread by PumpNotifications() (called from LobbyBehaviour.Update).
     // Utils.SendMessage cannot be called from a worker thread — it touches Unity RPC.
@@ -78,6 +88,8 @@ internal static class LobbyShare
 
             activeCode = code;
             activeFcHash = fcHash;
+            lastSentPlayerCount = players;
+            lastUpdateAt = Time.time;
             // Don't reset announceSucceeded — may already be true from re-entry to
             // the same lobby. Server PATCHes existing entries idempotently.
 
@@ -140,7 +152,30 @@ internal static class LobbyShare
         activeCode = null;
         activeFcHash = null;
         announceSucceeded = false;
+        lastSentPlayerCount = -1;
         FireAndForget(PostSignedAsync("/api/close", new LifecycleBody { code = code, fcHash = fc }));
+    }
+
+    // Called every tick by LobbyShareTickHook. Cheap diff-check + 5s throttle gates
+    // actual HTTP. Only fires during the lobby phase (inGame=false) — in-game player
+    // disconnects don't matter for "is this lobby joinable" signaling.
+    public static void MaybeUpdatePlayerCount()
+    {
+        if (!CanLifecycle()) return;
+        if (inGame) return;
+        if (!(Main.ShareLobbyToDiscord?.Value ?? false)) return;
+
+        int count = Main.AllPlayerControls?.Count ?? 0;
+        if (count < 1) return;
+        if (count == lastSentPlayerCount) return;
+
+        float now = Time.time;
+        if (now - lastUpdateAt < UpdateThrottleSeconds) return;
+
+        lastSentPlayerCount = count;
+        lastUpdateAt = now;
+
+        FireAndForget(PostSignedAsync("/api/update", new UpdateBody { code = activeCode, fcHash = activeFcHash, players = count }));
     }
 
     // ─── eligibility ──────────────────────────────────────────────────────────
@@ -322,6 +357,13 @@ internal static class LobbyShare
         public string code { get; set; }
         public string fcHash { get; set; }
     }
+
+    private sealed class UpdateBody
+    {
+        public string code { get; set; }
+        public string fcHash { get; set; }
+        public int players { get; set; }
+    }
 }
 
 // ─── Harmony hooks ────────────────────────────────────────────────────────────
@@ -364,5 +406,9 @@ internal static class LobbyShareCloseHook
 [HarmonyPatch(typeof(LobbyBehaviour), nameof(LobbyBehaviour.Update))]
 internal static class LobbyShareTickHook
 {
-    public static void Postfix() => LobbyShare.PumpNotifications();
+    public static void Postfix()
+    {
+        LobbyShare.PumpNotifications();
+        LobbyShare.MaybeUpdatePlayerCount();
+    }
 }

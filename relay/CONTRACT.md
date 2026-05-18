@@ -12,6 +12,7 @@ or signatures break.
 | `POST` | `/api/start` | game has started — PATCH embed to in-game (amber) |
 | `POST` | `/api/end` | game finished — PATCH embed back to "open" (blurple). Lobby is still alive; same code is rejoinable |
 | `POST` | `/api/close` | host actually left the lobby — DELETE message + KV entry |
+| `POST` | `/api/update` | live update of player count / max / mode (status preserved) — DLL fires throttled (~5s diff-detect) during the lobby phase |
 
 All three require these headers:
 
@@ -70,6 +71,26 @@ Field rules:
 - `fcHash` — `sha256_hex(friend_code + FC_SALT)`. 64 lowercase hex chars.
   - `FC_SALT` is a constant string baked into the DLL. Public. Its only role is preventing rainbow-table lookups of arbitrary friend codes from a KV dump.
 
+### `POST /api/update`
+
+```json
+{
+  "code":    "ABCDEF",
+  "fcHash":  "<same 64 hex>",
+  "players": 5,
+  "max":     15,
+  "mode":    "Standard"
+}
+```
+
+Field rules:
+- `code` + `fcHash` — same validation as other lifecycle endpoints.
+- `players`, `max`, `mode` — all optional. Only present fields are updated.
+- If no field actually differs from the stored value, the relay returns
+  `200 {"status":"no-change"}` and does NOT call Discord.
+- The embed's status (open vs in-game) is preserved — `/api/update` never
+  flips state, it only refreshes data fields.
+
 ### `POST /api/start`, `POST /api/end`, and `POST /api/close`
 
 ```json
@@ -97,6 +118,8 @@ All responses are JSON. Status codes:
 
 | status | meaning |
 |---|---|
+| `200 {"status":"updated"}` | /api/update: one or more fields changed; embed PATCHed |
+| `200 {"status":"no-change"}` | /api/update: all submitted fields matched stored values; no PATCH sent |
 | `200 {"status":"announced","messageId":"..."}` | first announce, Discord message posted |
 | `200 {"status":"refreshed","messageId":"..."}` | same host re-announced existing code; existing embed was PATCHed in place |
 | `200 {"status":"ignored"}` | host is on denylist (silent ack — don't surface to user) |
