@@ -8,9 +8,10 @@ or signatures break.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/announce` | new lobby created |
-| `POST` | `/api/start` | game has started — edit embed to "in-game" |
-| `POST` | `/api/end` | game finished / lobby closed — delete message |
+| `POST` | `/api/announce` | new lobby created — or, if same host re-announces existing code, PATCH the embed in place (handles Play-Again / player-count refreshes) |
+| `POST` | `/api/start` | game has started — PATCH embed to in-game (amber) |
+| `POST` | `/api/end` | game finished — PATCH embed back to "open" (blurple). Lobby is still alive; same code is rejoinable |
+| `POST` | `/api/close` | host actually left the lobby — DELETE message + KV entry |
 
 All three require these headers:
 
@@ -23,11 +24,15 @@ content-type: application/json
 `X-Signature` is computed as:
 
 ```
-HMAC_SHA256(key = SHARED_HMAC_KEY, message = X-Timestamp + "." + raw_request_body)
+HMAC_SHA256(key = <DLL's baked HMAC key>, message = X-Timestamp + "." + raw_request_body)
 ```
 
 - The body MUST be the exact bytes sent on the wire (no whitespace re-normalization)
-- `SHARED_HMAC_KEY` is a constant baked into the DLL and stored as a Worker secret
+- Each DLL release has **one** HMAC key baked in. The Worker holds a
+  comma-separated list (`SHARED_HMAC_KEYS`) of currently-accepted keys; any
+  signature that verifies under at least one listed key is accepted. This is
+  how rotation stays non-breaking — add new key, ship new DLL, drop old key
+  after grace.
 - Skew tolerance: ±300 seconds
 
 If signature is invalid or timestamp is skewed, the relay responds `401 bad signature`.
@@ -65,7 +70,7 @@ Field rules:
 - `fcHash` — `sha256_hex(friend_code + FC_SALT)`. 64 lowercase hex chars.
   - `FC_SALT` is a constant string baked into the DLL. Public. Its only role is preventing rainbow-table lookups of arbitrary friend codes from a KV dump.
 
-### `POST /api/start` and `POST /api/end`
+### `POST /api/start`, `POST /api/end`, and `POST /api/close`
 
 ```json
 { "code": "ABCDEF", "fcHash": "<same 64 hex>" }
@@ -76,6 +81,16 @@ otherwise responds `403 fcHash mismatch`. This is the only ownership check
 — sufficient for protecting against accidental cross-mutation, not
 sufficient for a determined attacker.
 
+**Lifecycle semantics:**
+- `/api/start` flips the embed to amber "🎮 In Game" but the KV entry persists.
+- `/api/end` flips the embed BACK to blurple "🎫 Lobby Open". The KV entry
+  stays alive — the lobby is still in memory and rejoinable. This is what
+  allows Play-Again to look correct in Discord without spamming new messages.
+- `/api/close` is the actual terminal: DELETE Discord message + DELETE KV
+  entry. The DLL fires this only when the host destroys the lobby (returns
+  to MainMenu). Abandoned lobbies that never see /api/close are eventually
+  swept by the KV TTL (`ANNOUNCE_TTL_SECONDS`, default 3h).
+
 ## Responses
 
 All responses are JSON. Status codes:
@@ -83,16 +98,18 @@ All responses are JSON. Status codes:
 | status | meaning |
 |---|---|
 | `200 {"status":"announced","messageId":"..."}` | first announce, Discord message posted |
-| `200 {"status":"dedup","messageId":"..."}` | same host re-announcing same code inside DEDUP window |
+| `200 {"status":"refreshed","messageId":"..."}` | same host re-announced existing code; existing embed was PATCHed in place |
 | `200 {"status":"ignored"}` | host is on denylist (silent ack — don't surface to user) |
 | `200 {"status":"started"}` | start-edit succeeded |
-| `200 {"status":"ended"}` | end-delete succeeded |
-| `200 {"status":"no-op"}` | start/end called for an unknown code (already expired) |
-| `200 {"status":"kv-cleared","warn":"..."}` | end: KV cleared but Discord delete failed; UI should treat as success |
+| `200 {"status":"lobby-resumed"}` | end: embed flipped back to "open" (Play-Again ready) |
+| `200 {"status":"closed"}` | close: Discord message + KV entry deleted |
+| `200 {"status":"no-op"}` | start/end/close called for an unknown code (already expired or never announced) |
+| `200 {"status":"kv-cleared","warn":"..."}` | close: KV cleared but Discord delete failed; UI should treat as success |
 | `400 {"error":"..."}` | malformed body |
 | `401 {"error":"bad signature"}` | HMAC/timestamp invalid |
 | `403 {"error":"fcHash mismatch"}` | start/end called by wrong host |
 | `409 {"error":"code already announced by another host"}` | someone else owns this code |
+| `426 {"error":"version blocked — upgrade required"}` | `modVersion` listed in `BLOCKED_VERSIONS`; DLL should surface as "please update" |
 | `429 {"error":"rate limited (ip\|host)"}` | DLL should back off ~RATE_LIMIT_SECONDS |
 | `502 {"error":"discord post failed: ..."}` | upstream Discord error; retry later |
 
@@ -100,16 +117,22 @@ All responses are JSON. Status codes:
 
 1. **Opt-in only.** Default-off. Toggle in Client Options: `ShareLobbyToDiscord`.
 2. **Trigger points.**
-   - announce: `LobbyBehaviour.Start` Postfix, after game code is known & host is confirmed.
-   - start: `IntroCutscene.CoBegin` Postfix (or equivalent game-start hook) — only if announce succeeded.
-   - end: `EndGameManager.SetEverythingUp` Postfix — only if announce succeeded.
-   - cancel: `LobbyBehaviour.OnDestroy` — also fires `end` so abandoned lobbies clear quickly.
+   - announce: `LobbyBehaviour.Start` Postfix (delayed by a few seconds via LateTask
+     until `PlayerControl.LocalPlayer` is available). Fires on both first-time and
+     re-entry; server idempotently PATCHes on re-entry.
+   - start: `ShipStatus.Begin` Postfix — only if announce succeeded.
+   - end: `AmongUsClient.OnGameEnd` Postfix — only if announce succeeded.
+     PATCHes the embed back to "open"; lobby still alive.
+   - close: `LobbyBehaviour.OnDestroy` Postfix — gated by an `inGame` flag that is
+     true between `start` and `end`. If `inGame=true` the OnDestroy is a
+     lobby→ship transition and `close` is skipped; if `inGame=false` the host
+     is leaving the lobby and `close` fires (DELETE message + KV).
 3. **Fire-and-forget.** All HTTP via `UnityWebRequest` async; never block game thread.
 4. **Failure UX.** Log + `Utils.SendMessage` to the host with the relay's error message. Match EHR's existing host-only error pattern.
 5. **Idempotency.** OK to call `start` / `end` more than once. Relay treats unknown codes as `no-op`.
 6. **Region exclusion.** If `IRegionInfo.Name` doesn't normalize to NA/EU/AS, don't announce (silently no-op). Don't crash.
 7. **Android.** No platform exclusion. UnityWebRequest works the same way.
-8. **HMAC key + FC_SALT.** Stored as `internal const` in `Modules/LobbyShare.cs`. Both are extractable from the DLL — that's accepted. Rotation = new release + new Worker secret.
+8. **HMAC key + FC_SALT.** Stored as `internal const` in `Modules/LobbyShareSecrets.cs` (gitignored; defaults to empty in `LobbyShareSecrets.Default.cs`). Both are extractable from the DLL — that's accepted. Rotation = ship a new release with a new key while leaving the old key in `SHARED_HMAC_KEYS` for a grace window so old DLLs keep working; remove the old key after the window (or immediately on confirmed leak).
 
 ## Things deliberately NOT in this contract
 

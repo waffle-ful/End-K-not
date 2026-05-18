@@ -6,13 +6,17 @@
 //
 // Threat model:
 //   • Casual curl-attacks against the public URL are blocked by HMAC signature
-//     check (SHARED_HMAC_KEY) + 5-min timestamp window.
-//   • A motivated reverser who pulls the key out of the DLL bypasses HMAC.
-//     Mitigation = rotate the key + ship a new DLL build. The relay also rate-
-//     limits per-IP so botnets are slow even after a leak.
-//   • Denylist (fcHash) is best-effort; an attacker with the HMAC key can spoof
-//     fcHash freely. Treat the denylist as "stops a known griefer from their
-//     usual Steam account", not "cryptographic ban".
+//     check (SHARED_HMAC_KEYS) + 5-min timestamp window. Multiple keys are
+//     accepted simultaneously so rotation doesn't break already-shipped DLLs:
+//     add the new key alongside the old one, ship a release using the new key,
+//     then drop the old key after a grace window (or immediately if leaked).
+//   • A motivated reverser who pulls a key out of any released DLL bypasses
+//     HMAC for that key. Mitigation = drop the leaked key from SHARED_HMAC_KEYS
+//     (only old DLLs using that exact key go silent) or add BLOCKED_VERSIONS
+//     entry for the leaked release.
+//   • Denylist (fcHash) is best-effort; an attacker with a valid HMAC key can
+//     spoof fcHash freely. Treat the denylist as "stops a known griefer from
+//     their usual Steam account", not "cryptographic ban".
 //
 // Routes:
 //   POST /api/announce   — host announces a new lobby (HMAC required)
@@ -28,17 +32,25 @@
 //   rl:ip:<ip>           — "1" TTL=RATE_LIMIT_SECONDS
 //   rl:fc:<fcHash>       — "1" TTL=RATE_LIMIT_SECONDS
 //   deny:fc:<fcHash>     — "1" (no TTL, manual unban)
-//   dedup:<CODE>:<fcHash>— "1" TTL=DEDUP_WINDOW_SECONDS
 
 export interface Env {
     STATE: KVNamespace;
     DISCORD_WEBHOOK_URL: string;
     ADMIN_TOKEN: string;
-    SHARED_HMAC_KEY: string;
+    // Comma-separated list of currently-valid HMAC keys (newest first).
+    // Falls back to legacy single-key SHARED_HMAC_KEY if unset.
+    SHARED_HMAC_KEYS?: string;
+    SHARED_HMAC_KEY?: string;
+    // Comma-separated list of exact modVersion strings to reject at announce.
+    // Empty / unset = no version block.
+    BLOCKED_VERSIONS?: string;
     ENV: string;
     ANNOUNCE_TTL_SECONDS: string;
     RATE_LIMIT_SECONDS: string;
-    DEDUP_WINDOW_SECONDS: string;
+    // Legacy — kept in interface for back-compat with deployed wrangler.toml that
+    // still declares the var. No longer read (dedup is folded into idempotent
+    // /api/announce PATCH behavior).
+    DEDUP_WINDOW_SECONDS?: string;
 }
 
 interface AnnounceBody {
@@ -110,13 +122,14 @@ export default {
                 return err(404, "not found");
             }
 
-            if (method === "POST" && (path === "/api/announce" || path === "/api/start" || path === "/api/end")) {
+            if (method === "POST" && (path === "/api/announce" || path === "/api/start" || path === "/api/end" || path === "/api/close")) {
                 const raw = await req.text();
                 const sigOk = await verifySignature(req, env, raw);
                 if (!sigOk) return err(401, "bad signature");
                 if (path === "/api/announce") return await handleAnnounce(req, env, raw);
                 if (path === "/api/start") return await handleLifecycle(env, raw, "start");
-                return await handleLifecycle(env, raw, "end");
+                if (path === "/api/end") return await handleLifecycle(env, raw, "end");
+                return await handleLifecycle(env, raw, "close");
             }
 
             return err(404, "not found");
@@ -136,19 +149,42 @@ async function verifySignature(req: Request, env: Env, body: string): Promise<bo
     if (!Number.isFinite(ts)) return false;
     const now = Math.floor(Date.now() / 1000);
     if (Math.abs(now - ts) > SIGNATURE_SKEW_SECONDS) return false;
-    if (!env.SHARED_HMAC_KEY) return false;
+
+    const keys = getHmacKeys(env);
+    if (keys.length === 0) return false;
 
     const enc = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-        "raw",
-        enc.encode(env.SHARED_HMAC_KEY),
-        { name: "HMAC", hash: "SHA-256" },
-        false,
-        ["sign"],
-    );
-    const macBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`${tsHeader}.${body}`));
-    const expected = toHex(new Uint8Array(macBuf));
-    return timingSafeEqual(sigHeader, expected);
+    const msg = enc.encode(`${tsHeader}.${body}`);
+    // Try each key. We can't short-circuit on first match without breaking
+    // timing-safety across keys, but the keys-list is tiny (≤ a handful) so the
+    // extra HMACs are negligible vs the per-key sign already needed.
+    let matched = false;
+    for (const k of keys) {
+        const key = await crypto.subtle.importKey(
+            "raw", enc.encode(k), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+        );
+        const macBuf = await crypto.subtle.sign("HMAC", key, msg);
+        const expected = toHex(new Uint8Array(macBuf));
+        if (timingSafeEqual(sigHeader, expected)) matched = true;
+    }
+    return matched;
+}
+
+function getHmacKeys(env: Env): string[] {
+    // Prefer the plural list. Empty / unset → fall back to the singular legacy var
+    // so previously-deployed Workers (with only SHARED_HMAC_KEY set) keep working
+    // until the operator re-puts under SHARED_HMAC_KEYS.
+    const raw = (env.SHARED_HMAC_KEYS && env.SHARED_HMAC_KEYS.trim().length > 0)
+        ? env.SHARED_HMAC_KEYS
+        : (env.SHARED_HMAC_KEY ?? "");
+    return raw.split(",").map(s => s.trim()).filter(s => s.length > 0);
+}
+
+function isBlockedVersion(modVersion: string, env: Env): boolean {
+    const raw = (env.BLOCKED_VERSIONS ?? "").trim();
+    if (raw.length === 0) return false;
+    const list = raw.split(",").map(s => s.trim()).filter(s => s.length > 0);
+    return list.includes(modVersion);
 }
 
 function toHex(buf: Uint8Array): string {
@@ -174,21 +210,14 @@ async function handleAnnounce(req: Request, env: Env, raw: string): Promise<Resp
     if (!v.ok) return err(400, v.error);
     const a = v.value;
 
+    if (isBlockedVersion(a.modVersion, env)) {
+        // Explicit error — operator deliberately gated this version; host should upgrade.
+        return err(426, "version blocked — upgrade required");
+    }
+
     if (await env.STATE.get(`deny:fc:${a.fcHash}`)) {
         // Silent-ack so a banned host can't probe the denylist.
         return ok({ status: "ignored" });
-    }
-
-    const ip = req.headers.get("cf-connecting-ip") ?? "unknown";
-    const rateLimitSec = num(env.RATE_LIMIT_SECONDS, 60);
-    if (await env.STATE.get(`rl:ip:${ip}`)) return err(429, "rate limited (ip)");
-    if (await env.STATE.get(`rl:fc:${a.fcHash}`)) return err(429, "rate limited (host)");
-
-    const dedupSec = num(env.DEDUP_WINDOW_SECONDS, 30);
-    const dedupKey = `dedup:${a.code}:${a.fcHash}`;
-    if (await env.STATE.get(dedupKey)) {
-        const existing = await env.STATE.get(`code:${a.code}`, "json") as CodeEntry | null;
-        if (existing) return ok({ status: "dedup", messageId: existing.messageId });
     }
 
     const existing = await env.STATE.get(`code:${a.code}`, "json") as CodeEntry | null;
@@ -197,6 +226,27 @@ async function handleAnnounce(req: Request, env: Env, raw: string): Promise<Resp
     }
 
     const publicData = stripFcHash(a);
+    const announceTtl = num(env.ANNOUNCE_TTL_SECONDS, 10800);
+
+    // Same-host re-announce (lobby returning from a game, player count change, etc.):
+    // PATCH the existing embed rather than POST a new one. This is the "one lobby = one
+    // message" invariant — keeps the Discord channel from spamming on every Play-Again.
+    // No rate-limit applies because we're not creating new state; per-IP / per-host
+    // limits only gate first announces.
+    if (existing) {
+        const r = await editDiscordMessage(env.DISCORD_WEBHOOK_URL, existing.messageId, buildEmbed(publicData, "open"));
+        if (!r.ok) return err(502, `discord patch failed: ${r.error}`);
+        existing.status = "open";
+        existing.announce = publicData;
+        await env.STATE.put(`code:${a.code}`, JSON.stringify(existing), { expirationTtl: kvTtl(remainingTtl(existing, env)) });
+        return ok({ status: "refreshed", messageId: existing.messageId });
+    }
+
+    const ip = req.headers.get("cf-connecting-ip") ?? "unknown";
+    const rateLimitSec = num(env.RATE_LIMIT_SECONDS, 60);
+    if (await env.STATE.get(`rl:ip:${ip}`)) return err(429, "rate limited (ip)");
+    if (await env.STATE.get(`rl:fc:${a.fcHash}`)) return err(429, "rate limited (host)");
+
     const sendResult = await postDiscordMessage(env.DISCORD_WEBHOOK_URL, buildEmbed(publicData, "open"));
     if (!sendResult.ok) return err(502, `discord post failed: ${sendResult.error}`);
 
@@ -208,18 +258,16 @@ async function handleAnnounce(req: Request, env: Env, raw: string): Promise<Resp
         announce: publicData,
     };
 
-    const announceTtl = num(env.ANNOUNCE_TTL_SECONDS, 10800);
     await Promise.all([
-        env.STATE.put(`code:${a.code}`, JSON.stringify(entry), { expirationTtl: announceTtl }),
-        env.STATE.put(`rl:ip:${ip}`, "1", { expirationTtl: rateLimitSec }),
-        env.STATE.put(`rl:fc:${a.fcHash}`, "1", { expirationTtl: rateLimitSec }),
-        env.STATE.put(dedupKey, "1", { expirationTtl: dedupSec }),
+        env.STATE.put(`code:${a.code}`, JSON.stringify(entry), { expirationTtl: kvTtl(announceTtl) }),
+        env.STATE.put(`rl:ip:${ip}`, "1", { expirationTtl: kvTtl(rateLimitSec) }),
+        env.STATE.put(`rl:fc:${a.fcHash}`, "1", { expirationTtl: kvTtl(rateLimitSec) }),
     ]);
 
     return ok({ status: "announced", messageId: sendResult.messageId });
 }
 
-async function handleLifecycle(env: Env, raw: string, phase: "start" | "end"): Promise<Response> {
+async function handleLifecycle(env: Env, raw: string, phase: "start" | "end" | "close"): Promise<Response> {
     const body = safeParse<Partial<LifecycleBody>>(raw);
     if (!body) return err(400, "invalid json");
 
@@ -233,6 +281,7 @@ async function handleLifecycle(env: Env, raw: string, phase: "start" | "end"): P
     if (entry.fcHash !== fcHash) return err(403, "fcHash mismatch");
 
     if (phase === "start") {
+        // Game starting — flip embed to in-game (amber).
         const r = await editDiscordMessage(
             env.DISCORD_WEBHOOK_URL,
             entry.messageId,
@@ -240,15 +289,29 @@ async function handleLifecycle(env: Env, raw: string, phase: "start" | "end"): P
         );
         if (!r.ok) return err(502, `discord patch failed: ${r.error}`);
         entry.status = "in-game";
-        const remaining = remainingTtl(entry, env);
-        await env.STATE.put(`code:${code}`, JSON.stringify(entry), { expirationTtl: remaining });
+        await env.STATE.put(`code:${code}`, JSON.stringify(entry), { expirationTtl: kvTtl(remainingTtl(entry, env)) });
         return ok({ status: "started" });
-    } else {
-        const r = await deleteDiscordMessage(env.DISCORD_WEBHOOK_URL, entry.messageId);
-        await env.STATE.delete(`code:${code}`);
-        if (!r.ok) return ok({ status: "kv-cleared", warn: r.error });
-        return ok({ status: "ended" });
     }
+
+    if (phase === "end") {
+        // Game ended — flip embed BACK to "open" so the same code stays usable
+        // for Play Again. KV entry stays alive; we only DELETE on /api/close.
+        const r = await editDiscordMessage(
+            env.DISCORD_WEBHOOK_URL,
+            entry.messageId,
+            buildEmbed(entry.announce, "open"),
+        );
+        if (!r.ok) return err(502, `discord patch failed: ${r.error}`);
+        entry.status = "open";
+        await env.STATE.put(`code:${code}`, JSON.stringify(entry), { expirationTtl: kvTtl(remainingTtl(entry, env)) });
+        return ok({ status: "lobby-resumed" });
+    }
+
+    // phase === "close" — lobby truly destroyed (host left). DELETE message + KV.
+    const r = await deleteDiscordMessage(env.DISCORD_WEBHOOK_URL, entry.messageId);
+    await env.STATE.delete(`code:${code}`);
+    if (!r.ok) return ok({ status: "kv-cleared", warn: r.error });
+    return ok({ status: "closed" });
 }
 
 async function handleAdminBan(req: Request, env: Env, ban: boolean): Promise<Response> {
@@ -389,6 +452,14 @@ async function safeText(r: Response): Promise<string> {
 function num(v: string | undefined, fallback: number): number {
     const n = Number(v);
     return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+// Cloudflare KV requires expirationTtl >= 60 seconds. Clamp any per-key TTL up
+// to that floor so a stray config tuning below 60 doesn't make the entire
+// announce path 500 (we hit this with DEDUP_WINDOW_SECONDS=30 on first deploy).
+const KV_MIN_TTL_SECONDS = 60;
+function kvTtl(seconds: number): number {
+    return Math.max(KV_MIN_TTL_SECONDS, Math.floor(seconds));
 }
 
 function remainingTtl(entry: CodeEntry, env: Env): number {

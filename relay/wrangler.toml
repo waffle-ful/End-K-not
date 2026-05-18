@@ -8,16 +8,28 @@ workers_dev = true
 # Then paste the returned id below.
 [[kv_namespaces]]
 binding = "STATE"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "b87abd55c60f480ba041ca801bd3e379"
 
 # Secrets — set via wrangler:
 #   wrangler secret put DISCORD_WEBHOOK_URL   # the channel webhook the relay posts to
 #   wrangler secret put ADMIN_TOKEN           # bearer token for /admin/* endpoints
-#   wrangler secret put SHARED_HMAC_KEY       # must match the value baked into the DLL
+#   wrangler secret put SHARED_HMAC_KEYS      # comma-separated list of currently-valid
+#                                             # HMAC keys (newest first). The Worker
+#                                             # accepts a signature from ANY listed key,
+#                                             # so old DLLs keep working until their
+#                                             # key is removed from the list.
+#                                             # Legacy SHARED_HMAC_KEY (singular) is
+#                                             # still honored as a fallback when
+#                                             # SHARED_HMAC_KEYS is empty/unset.
 # Do NOT commit these values.
 
 [vars]
 ENV = "production"
 ANNOUNCE_TTL_SECONDS = "10800"   # KV TTL for active lobby entries (3h)
 RATE_LIMIT_SECONDS = "60"        # per-IP and per-fcHash floor between announces
-DEDUP_WINDOW_SECONDS = "30"      # ignore identical announces inside this window
+# DEDUP_WINDOW_SECONDS deprecated as of Phase 2 — same-host re-announces now PATCH
+# the existing embed instead of being deduped against a window. The variable can stay
+# declared for back-compat; the Worker no longer reads it.
+DEDUP_WINDOW_SECONDS = "60"
+BLOCKED_VERSIONS = ""            # comma-separated list of modVersion strings to refuse
+                                 # (e.g. "0.4.0,0.4.1"). Empty = no block.

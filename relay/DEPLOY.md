@@ -74,8 +74,21 @@ npx wrangler secret put DISCORD_WEBHOOK_URL
 npx wrangler secret put ADMIN_TOKEN
 #   → paste the admin token from Step 3
 
-npx wrangler secret put SHARED_HMAC_KEY
-#   → paste the HMAC key from Step 3
+npx wrangler secret put SHARED_HMAC_KEYS
+#   → paste the HMAC key from Step 3.
+#   This is a comma-separated list of valid keys (newest first).
+#   For the first deploy you only have one — just paste the single key.
+#   Later, when rotating, re-put this with "K_new,K_old".
+```
+
+If you already ran `npx wrangler secret put SHARED_HMAC_KEY` (singular) on an
+earlier draft of these docs, that legacy name still works — the Worker falls
+back to it when `SHARED_HMAC_KEYS` is empty. But re-putting under the plural
+name enables painless rotation later, so do that now:
+
+```bash
+npx wrangler secret delete SHARED_HMAC_KEY       # remove the legacy single-key secret
+npx wrangler secret put SHARED_HMAC_KEYS          # paste the same key value
 ```
 
 ## Step 5 — Local smoke test

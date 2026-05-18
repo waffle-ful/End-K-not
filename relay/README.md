@@ -21,7 +21,7 @@ Worker Secrets and only the Worker can speak to Discord.
 | One IP spamming many distinct codes | ✅ | Per-IP rate limit |
 | Cross-host code hijack (B re-announces A's code) | ✅ | `409 code already announced by another host` |
 | Banned griefer using their usual Steam account | ✅ | `fcHash` denylist (silent ignore) |
-| **Determined reverser extracting `SHARED_HMAC_KEY` from the DLL** | ❌ | Mitigation = rotate the key + ship a new DLL release. The relay can't tell a real DLL from an HMAC-valid forgery. |
+| **Determined reverser extracting the HMAC key from a released DLL** | ❌ | Each DLL release ships a single key; the Worker holds a list (`SHARED_HMAC_KEYS`). Mitigation = drop the leaked key from the list (only that release goes silent) and/or add `BLOCKED_VERSIONS` for the affected `modVersion`. New release uses a fresh key. |
 | **Same attacker spoofing arbitrary `fcHash` values** | ❌ | Once they have the HMAC key, they can bypass the denylist by minting a fresh fake `fcHash` per request. Per-IP rate-limit still slows them down. |
 | Fake (non-existent) game codes posted to Discord | ❌ | The Worker can't reach AU's matchmaker (it requires the host's EOS bearer token, which the relay doesn't have). Mitigation = Discord moderators clean up + ban via `/admin/ban`. |
 
@@ -123,12 +123,43 @@ A typical announce = 4 KV writes + ~3 KV reads + 1 Discord POST.
 ~250 announces / day fit comfortably. Over the free limit the Worker returns
 503 — there is no auto-billing escalation.
 
-## Rotating the HMAC key
+## Rotating the HMAC key (non-breaking)
 
-If you suspect the key has leaked:
+The Worker accepts a **list** of valid keys (`SHARED_HMAC_KEYS`, comma-separated).
+A new release ships one new key; the old key stays in the list during a grace
+window so already-distributed DLLs keep working.
 
 ```bash
-npx wrangler secret put SHARED_HMAC_KEY   # paste new key
-# Then ship a DLL release with the new key. Old DLLs will start receiving
-# 401 bad signature and silently stop announcing.
+# 1) Generate a fresh key
+openssl rand -hex 32   # → K_new
+# (on Windows PowerShell, see DEPLOY.md Step 3 for the equivalent)
+
+# 2) Add K_new to the front of the list, keep K_old behind it
+npx wrangler secret put SHARED_HMAC_KEYS
+#   → paste:  K_new,K_old
+
+# 3) Bake K_new into Modules/LobbyShareSecrets.cs in your build dir, ship release.
+#    Hosts on the new DLL sign with K_new; old DLLs still sign with K_old and the
+#    Worker accepts both.
+
+# 4) After the grace window (or immediately on confirmed leak), drop K_old:
+npx wrangler secret put SHARED_HMAC_KEYS
+#   → paste:  K_new
+
+# Hosts still on the old DLL then start receiving 401 bad signature and silently
+# stop announcing — at that point the feature is opt-in anyway, so this is fine.
 ```
+
+### Targeted version block
+
+If a specific release leaks but you don't want to invalidate its key (perhaps
+because legit hosts are still using it), you can block just that `modVersion`:
+
+```bash
+# In wrangler.toml [vars]:
+BLOCKED_VERSIONS = "0.4.0,0.4.1"
+npx wrangler deploy
+```
+
+Hosts on a blocked version receive `426 version blocked` and surface an upgrade
+prompt in-game.
