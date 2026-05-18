@@ -1116,7 +1116,11 @@ internal static class ReportDeadBodyPatch
 
             if (target)
             {
-                if (Coroner.UnreportablePlayers.Contains(target.PlayerId)
+                bool skinwalkerCanWear = __instance.Is(CustomRoles.Skinwalker)
+                                         && __instance.GetAbilityUseLimit() >= 1
+                                         && !Skinwalker.WornCorpseTargetId.ContainsKey(__instance.PlayerId);
+
+                if ((Coroner.UnreportablePlayers.Contains(target.PlayerId) && !skinwalkerCanWear)
                     || Vulture.UnreportablePlayers.Contains(target.PlayerId)
                     || (killer && killer.Is(CustomRoles.Goddess))
                     || Main.PlayerStates[target.PlayerId].deathReason == PlayerState.DeathReason.Gambled
