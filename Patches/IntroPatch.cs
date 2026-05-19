@@ -1047,7 +1047,7 @@ internal static class BeginImpostorPatch
 
         if (PlayerControl.LocalPlayer.IsImpostor() && role != CustomRoles.DoubleAgent && CustomRoleSelector.RoleResult.ContainsValue(CustomRoles.DoubleAgent))
         {
-            foreach (var pc in Main.CachedAllPlayerControls())
+            foreach (var pc in Main.EnumeratePlayerControls())
             {
                 if (pc.Is(CustomRoles.DoubleAgent) && !pc.AmOwner)
                     yourTeam.Add(pc);
