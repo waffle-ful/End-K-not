@@ -9334,6 +9334,8 @@
   "CommandForms.TimeLimit": "til,timelimit",
   "CommandForms.BBDiag": "bbdiag",
   "CommandForms.BBToggle": "bbtoggle",
+  "CommandForms.BBSpawn": "bbspawn",
+  "CommandForms.BBClear": "bbclear",
   "CommandForms.TPIn": "tpin",
   "CommandForms.TPOut": "tpout",
   "CommandForms.Target": "target,ターゲット",

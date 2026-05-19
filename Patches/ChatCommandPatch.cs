@@ -177,6 +177,8 @@ internal static class ChatCommands
             new("TPIn", "", Command.UsageLevels.Everyone, Command.UsageTimes.InLobby, TPInCommand, true, false),
             new("BBDiag", "", Command.UsageLevels.Host, Command.UsageTimes.InLobby, BBDiagCommand, true, true),
             new("BBToggle", "", Command.UsageLevels.Host, Command.UsageTimes.InLobby, BBToggleCommand, true, true),
+            new("BBSpawn", "", Command.UsageLevels.Host, Command.UsageTimes.InLobby, BBSpawnCommand, true, true),
+            new("BBClear", "", Command.UsageLevels.Host, Command.UsageTimes.InLobby, BBClearCommand, true, true),
             new("Template", "{tag}", Command.UsageLevels.Everyone, Command.UsageTimes.Always, TemplateCommand, true, false, [GetString("CommandArgs.Template.Tag")]),
             new("MessageWait", "{duration}", Command.UsageLevels.Host, Command.UsageTimes.Always, MessageWaitCommand, true, false, [GetString("CommandArgs.MessageWait.Duration")]),
             new("Death", "[id]", Command.UsageLevels.Everyone, Command.UsageTimes.AfterDeath, DeathCommand, true, false, [GetString("CommandArgs.Death.Id")]),
@@ -2417,6 +2419,16 @@ internal static class ChatCommands
     private static void BBToggleCommand(PlayerControl player, string text, string[] args)
     {
         BackroomsLobby.ToggleShipColliders(player.PlayerId);
+    }
+
+    private static void BBSpawnCommand(PlayerControl player, string text, string[] args)
+    {
+        BackroomsLobby.SpawnTestPattern(player.PlayerId);
+    }
+
+    private static void BBClearCommand(PlayerControl player, string text, string[] args)
+    {
+        BackroomsLobby.ClearTiles(player.PlayerId);
     }
 
     private static void MyRoleCommand(PlayerControl player, string text, string[] args)
