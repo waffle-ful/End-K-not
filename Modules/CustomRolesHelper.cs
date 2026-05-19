@@ -60,6 +60,7 @@ internal static class CustomRolesHelper
         public bool IsExperimental()
         {
             return role is
+                CustomRoles.Doppelganger or
                 CustomRoles.DoubleAgent or
                 CustomRoles.Weatherman;
         }
