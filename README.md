@@ -6,7 +6,7 @@
 
 ## このMod について
 
-**End K not** は、[Endless Host Roles (EHR)](https://github.com/Gurge44/EndlessHostRoles) をベースとした Among Us の非公式個人フォークです。EHR の **450+ の役職と 16 のゲームモード**に加えて、[TownOfHost-K (TOHK)](https://github.com/KYMario/TownOfHost-K) 由来の役職を順次 RoleBase システム上で再実装しています。
+**End K not** は、[Endless Host Roles (EHR)](https://github.com/Gurge44/EndlessHostRoles) をベースとした Among Us の非公式個人フォークです。EHR の **600+ の役職・16 のゲームモード**に加え、[TownOfHost-K (TOHK)](https://github.com/KYMario/TownOfHost-K) 由来の役職を EHR の RoleBase 化して移植中。
 
 ホストのクライアントに導入するだけで動作し、他のプレイヤーは Mod を導入せずに追加役職を楽しめます。
 
@@ -20,7 +20,7 @@
 ## End K not の特徴
 
 - **EHR + TOHK の役職統合** — EHR の役職セットに加えて、TOHK 由来の役職を RoleBase 化して移植中
-- **Calamity テーマのメインメニュー** *(開発中)* — Calamity 風カスタムメインメニュー UI を実装中
+- **Calamity(Terraria) テーマのメインメニュー** *(開発中)* — Calamity 風カスタムメインメニュー UI を実装中（[CalamityModPublic](https://github.com/CalamityTeam/CalamityModPublic) を参考）
 - **BGM システム** — メニュー / ロビー / 任務中 / 会議 / 結果画面の BGM をホストが差し替え可能。デフォルト BGM 同梱
 - **外部通信の無効化** — EHR 上流が行っていた実績 API・オンラインプリセット・ニュース取得などの通信を無効化。自Mod の更新確認（GitHub API）と Bard・アナグラム等の一部役職ゲーム機能を除き、外部への通信は行いません
 - **GPL-3.0 オープンソース** — ソースコード全公開、改変・再配布自由
@@ -36,7 +36,7 @@
 | ニュートラル | 129 |
 | カバン (Coven) | 20 |
 | ゲームモード専用 | 27 |
-| その他 | 4 (GM / ForceFielder / Akazukin / Convict) |
+| その他 | 2 (GM / Convict) |
 | サブ役職（アドオン） | 114 |
 
 > [!TIP]
@@ -134,7 +134,7 @@
 | 副官 (Deputy) | 分析者 (Analyst) | 変身解除者 (Unshifter) | 報復者 (Retributionist) |
 | 法医学者 (Forensic) | 冒険者 (Adventurer) | 模倣者 (Imitator) | 木 (Tree) |
 | 預言者 (Soothsayer) | 霊能者 (Psychic) | 恋人 (LovingCrewmate) | 錬金術師 (Alchemist) |
-| 狼少年 (WolfBoy) |  |  |  |
+| 狼少年 (WolfBoy) | フォースフィールダー(ForceFielder) | あかづきん (Akazukin) | ???(???) |
 
 ### ニュートラル系 (129)
 
@@ -196,11 +196,11 @@
 | プレイヤー (Potato) | ベッドウォーズ (BedWarsPlayer) | ベンター (Venter) | ルーム ラッシュ (RRPlayer) |
 | ロケーター (Locator) | 旗の捕獲者 (CTFPlayer) | 自然災害 (NDPlayer) |  |
 
-### その他 (4)
+### その他 (2)
 
 |   |   |   |   |
 |---|---|---|---|
-| ForceFielder | あかづきん (Akazukin) | ゲームマスター (GM) | 犯罪者 (Convict) |
+| ゲームマスター (GM) | 犯罪者 (Convict) |  |  |
 
 ### サブ役職・アドオン (114)
 
@@ -273,13 +273,23 @@ End K not は [Endless Host Roles](https://github.com/Gurge44/EndlessHostRoles) 
 ## クレジット
 
 - **[Endless Host Roles](https://github.com/Gurge44/EndlessHostRoles)** (Gurge44 他) — ベース Mod、GPL-3.0
-- **[TownOfHost-K](https://github.com/KYMario/TownOfHost-K)** (KYMario 他) — 移植元役職、GPL-3.0
+- **[TownOfHost-K](https://github.com/KYMario/TownOfHost-K)** (KYMario 他) — 多くの役職、配信サポート機能、GPL-3.0
 - **[SuperNewRoles](https://github.com/SuperNewRoles/SuperNewRoles)** (SuperNewRoles 開発チーム) — 波動砲 (WaveCannon) の設計参考、GPL-3.0
 - **[TownOfHost-Pko](https://github.com/satokazoku/TownOfHost-Pko)** (satokazoku 他) — 波動砲の設計参考、GPL-3.0
-- **[Town Of Host](https://github.com/tukasa0001/TownOfHost)** (tukasa0001 他) — TOH 系列の祖、README フォーマット参考
-- **[Town Of Host_ForE](https://github.com/AsumuAkaguma/TownOfHost_ForE)** — README 構成参考
+- **[Town Of Host](https://github.com/tukasa0001/TownOfHost)** (tukasa0001 他) — TOH 系列の祖
+- **[Town Of Host_ForE](https://github.com/AsumuAkaguma/TownOfHost_ForE)** — BGMカスタマイズ機能
+- **[Town of Host: Enhanced (TOHE)](https://github.com/EnhancedNetwork/TownofHost-Enhanced)**(The Enhanced Network 開発チーム) — 多くの役職 
 
-その他、各役職の移植元については [`CHANGELOG.md`](./CHANGELOG.md) や各 commit メッセージを参照してください。
+### Music Credits
+DM DOKURO様のBGMが使われています
+- [DM DOKURO YouTube Channel](https://www.youtube.com/@DMDOKURO)
+
+自称芸術家みーさん様のBGMが使われています
+- [HURT RECORD](https://www.hurtrecord.com/bgm/46/zero-no-heya.html)
+
+
+---
+その他については [`CHANGELOG.md`](./CHANGELOG.md) や各 commit メッセージを参照してください。
 
 ---
 

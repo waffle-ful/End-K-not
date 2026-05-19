@@ -6,7 +6,7 @@
 
 ## About this mod
 
-**End K not** is an unofficial personal fork of [Endless Host Roles (EHR)](https://github.com/Gurge44/EndlessHostRoles) for Among Us. On top of EHR's **450+ roles and 16 game modes**, End K not ports roles from [TownOfHost-K (TOHK)](https://github.com/KYMario/TownOfHost-K) onto EHR's RoleBase system.
+**End K not** is an unofficial personal fork of [Endless Host Roles (EHR)](https://github.com/Gurge44/EndlessHostRoles) for Among Us. On top of EHR's **600+ roles and 16 game modes**, End K not ports roles from [TownOfHost-K (TOHK)](https://github.com/KYMario/TownOfHost-K) onto EHR's RoleBase system.
 
 Only the lobby host needs to install the mod — other players can join and enjoy the additional roles without installing anything.
 
@@ -61,8 +61,17 @@ End K not is a derivative of [Endless Host Roles](https://github.com/Gurge44/End
 - **[TownOfHost-K](https://github.com/KYMario/TownOfHost-K)** (KYMario et al.) — source of ported roles, GPL-3.0
 - **[SuperNewRoles](https://github.com/SuperNewRoles/SuperNewRoles)** (SuperNewRoles team) — WaveCannon design reference, GPL-3.0
 - **[TownOfHost-Pko](https://github.com/satokazoku/TownOfHost-Pko)** (satokazoku et al.) — WaveCannon design reference, GPL-3.0
-- **[Town Of Host](https://github.com/tukasa0001/TownOfHost)** (tukasa0001 et al.) — root of the TOH lineage, README format reference
-- **[Town Of Host_ForE](https://github.com/AsumuAkaguma/TownOfHost_ForE)** — README structure reference
+- **[Town Of Host](https://github.com/tukasa0001/TownOfHost)** (tukasa0001 et al.) — root of the TOH lineage
+- **[Town Of Host_ForE](https://github.com/AsumuAkaguma/TownOfHost_ForE)** — BGM customization feature
+- **[Town of Host: Enhanced (TOHE)](https://github.com/EnhancedNetwork/TownofHost-Enhanced)** (The Enhanced Network team) — source of many roles, GPL-3.0
+
+### Music Credits
+
+BGM by **DM DOKURO**
+- [DM DOKURO YouTube Channel](https://www.youtube.com/@DMDOKURO)
+
+BGM by **自称芸術家みーさん (Miisan)**
+- [HURT RECORD](https://www.hurtrecord.com/bgm/46/zero-no-heya.html)
 
 For per-role porting credits, see [`CHANGELOG.md`](./CHANGELOG.md) and individual commit messages.
 
