@@ -90,6 +90,11 @@ internal static class LobbyBehaviourStartPatch
 
     public static void Postfix()
     {
+        // 新 LobbyBehaviour 起動 → 前 session の stale Backrooms state を捨てる
+        // (main menu 経由で復帰した時に dead Unity ref が残るバグ対応 — 2026-05-22 v3)
+        try { BackroomsLobby.OnLobbyReload(); }
+        catch (Exception ex) { Logger.Warn($"OnLobbyReload failed: {ex.Message}", "BackroomsGen"); }
+
         if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
         {
             LateTask.New(() =>
@@ -111,6 +116,20 @@ internal static class LobbyBehaviourStartPatch
                 catch (Exception ex) { Logger.Warn($"LobbyBehaviour.Start reset failed: {ex.Message}", "LobbyKill"); }
             }, 1.0f, log: false);
         }
+
+        // Auto-enter Backrooms — モッドクライアント全員 (host も guest も) ローカル視界が Backrooms に置き換わる。
+        // TP しないので非モッドクライアントには影響なし。seed は GameId 由来でモッド client 間で同じ layout
+        LateTask.New(() =>
+        {
+            try
+            {
+                if (LobbyBehaviour.Instance == null || PlayerControl.LocalPlayer == null) return;
+                uint seed = AmongUsClient.Instance != null ? unchecked((uint)AmongUsClient.Instance.GameId) : 0u;
+                if (seed == 0u) seed = (uint)UnityEngine.Random.Range(1, int.MaxValue);
+                BackroomsLobby.EnterBackrooms(seed, byte.MaxValue, silent: true);
+            }
+            catch (Exception ex) { Logger.Warn($"Auto-enter Backrooms failed: {ex.Message}", "BackroomsGen"); }
+        }, 1.5f, log: false);
 
         if (!(Main.EnableBGM?.Value ?? false)) return;
         SilencePending = true;

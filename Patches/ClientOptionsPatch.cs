@@ -37,6 +37,9 @@ public static class OptionsMenuBehaviourStartPatch
     private static ClientOptionItem TryFixStuttering;
     private static ClientOptionItem ShowClientControlGUI;
     private static ClientOptionItem ShareLobbyToDiscord;
+    private static ClientOptionItem BackroomsReduceRays;
+    private static ClientOptionItem BackroomsThrottleVision;
+    private static ClientOptionItem BackroomsReduceProcgen;
 #if DEBUG
     private static ClientOptionItem GodMode;
 #endif
@@ -298,6 +301,15 @@ public static class OptionsMenuBehaviourStartPatch
 
         if ((ShareLobbyToDiscord == null || !ShareLobbyToDiscord.ToggleButton) && Modules.LobbyShare.IsConfigured)
             ShareLobbyToDiscord = ClientOptionItem.Create("ShareLobbyToDiscord", Main.ShareLobbyToDiscord, __instance);
+
+        if (BackroomsReduceRays == null || !BackroomsReduceRays.ToggleButton)
+            BackroomsReduceRays = ClientOptionItem.Create("BackroomsReduceRays", Main.BackroomsReduceRays, __instance, Modules.BackroomsLobby.InvalidatePerfCache);
+
+        if (BackroomsThrottleVision == null || !BackroomsThrottleVision.ToggleButton)
+            BackroomsThrottleVision = ClientOptionItem.Create("BackroomsThrottleVision", Main.BackroomsThrottleVision, __instance, Modules.BackroomsLobby.InvalidatePerfCache);
+
+        if (BackroomsReduceProcgen == null || !BackroomsReduceProcgen.ToggleButton)
+            BackroomsReduceProcgen = ClientOptionItem.Create("BackroomsReduceProcgen", Main.BackroomsReduceProcgen, __instance, Modules.BackroomsLobby.RegenerateIfActive);
 
 #if DEBUG
         if ((GodMode == null || GodMode.ToggleButton == null) && DebugModeManager.AmDebugger)

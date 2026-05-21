@@ -12,6 +12,14 @@ public static class BackroomsLobby
 {
     private static readonly List<Collider2D> DisabledColliders = [];
 
+    // 2026-05-21: モッドクライアント目線でバニラ船を完全に隠す。EnterBackrooms で
+    // LobbyBehaviour 配下の Renderer 全部を退避 + disable、ExitBackrooms で復元。
+    // 2026-05-22: SpriteRenderer 限定 → Renderer 基底に拡張 (ParticleSystemRenderer
+    //   経由の流れ星/スクロール星空も catch)。SpawnedTiles は SetParent(null) なので
+    //   配下走査からは外れる
+    // OnGameStart 経路では scene unload に任せて参照クリアだけ
+    private static readonly List<Renderer> DisabledRenderers = [];
+
     public static void DumpLobbyColliders(byte targetPid)
     {
         if (LobbyBehaviour.Instance == null)
@@ -96,6 +104,11 @@ public static class BackroomsLobby
     // Phase 5 で BaselineSprite を実 PNG (Utils.LoadSprite) に置換予定
 
     private static readonly List<GameObject> SpawnedTiles = [];
+
+    // SpawnedTiles と完全に index 一致する位置キャッシュ。
+    // 距離 cull の hot loop で transform.position interop call を避けるため。
+    // SpawnedTiles を mutate する全 site で同期維持必須
+    private static readonly List<Vector2> SpawnedTilePositions = [];
 
     // 壁 AABB を spawn 時に cache (UpdateVision の毎フレーム GetComponent ストーム回避)
     // entry: (cx, cy, halfX, halfY) — 中心と半サイズ
@@ -226,6 +239,17 @@ public static class BackroomsLobby
         sr.sortingOrder = GetSortingOrder(kind);
 
         SpawnedTiles.Add(go);
+        SpawnedTilePositions.Add(pos); // 距離 cull の hot loop で interop 回避するため
+
+        // 即時 cull: GenerateLobby が _spawnCullCenterValid を立てると、spawn 時点で
+        // player から CullRadius 圏外なら inactive で生まれる。bulk sweep (~6k SetActive) を
+        // 回避し freeze 短縮。LocalPlayer.GetTruePosition の interop は spawn ループ外で 1 回だけ
+        if (_spawnCullCenterValid)
+        {
+            float ex = pos.x - _spawnCullCenter.x;
+            float ey = pos.y - _spawnCullCenter.y;
+            if (ex * ex + ey * ey >= CullRadiusSqr) go.SetActive(false);
+        }
 
         // wall タイル限定で AABB を cache (UpdateVision で GetComponent 回避)
         if (kind is "wall" or "wall_h" or "wall_v")
@@ -398,23 +422,96 @@ public static class BackroomsLobby
         }
 
         SpawnedTiles.Clear();
+        SpawnedTilePositions.Clear();
         WallAabbs.Clear();
         Utils.SendMessage($"Cleared {cleared} tiles.", targetPid);
         Logger.Info($"Cleared {cleared} tiles", "BackroomsDiag");
+    }
+
+    public static void DumpVisionDiagCurrentSeed(byte targetPid) => DumpVisionDiag(targetPid, _lastSeed);
+
+    // /bbvisdiag — 視界 polygon と周辺 cell の整合性を診断
+    //   wall pass-through bug の原因切り分け用:
+    //   ・player cell type (floor/wall_h/wall_v) と procgen 期待値を表示
+    //   ・周辺 5x5 cell の type grid を ASCII で
+    //   ・各 cardinal 方向の ray hit distance と最近接 wall distance を比較
+    //   ・nearbyAabbs の数と最近接 wall の位置
+    public static void DumpVisionDiag(byte targetPid, uint seed)
+    {
+        if (PlayerControl.LocalPlayer == null) return;
+        Vector2 p = PlayerControl.LocalPlayer.GetTruePosition();
+        Vector2 pTrans = PlayerControl.LocalPlayer.transform.position;
+        int px = Mathf.RoundToInt(p.x);
+        int py = Mathf.RoundToInt(p.y);
+
+        StringBuilder sb = new();
+        sb.AppendLine($"=== Vision Diag === feet=({p.x:F3}, {p.y:F3}) transform=({pTrans.x:F3}, {pTrans.y:F3}) cell=({px},{py}) seed={seed}");
+
+        CellKind pCell = ClassifyCell(px, py, seed);
+        sb.AppendLine($"player cell kind: {pCell}");
+
+        sb.AppendLine("5x5 cell grid centered on player (row=high y at top):");
+        sb.Append("       ");
+        for (int dx = -2; dx <= 2; dx++) sb.Append($"x={px + dx,3} ");
+        sb.AppendLine();
+        for (int dy = 2; dy >= -2; dy--)
+        {
+            sb.Append($"y={py + dy,3}: ");
+            for (int dx = -2; dx <= 2; dx++)
+            {
+                CellKind k = ClassifyCell(px + dx, py + dy, seed);
+                string label = k switch { CellKind.Floor => " .  ", CellKind.WallH => "[H] ", CellKind.WallV => "[V] ", _ => " ?  " };
+                sb.Append(label).Append(' ');
+            }
+            sb.AppendLine();
+        }
+
+        sb.AppendLine($"\nNearbyAabbs count = {_nearbyAabbs.Count}");
+        for (int i = 0; i < _nearbyAabbs.Count && i < 12; i++)
+        {
+            var w = _nearbyAabbs[i];
+            float dx = Mathf.Max(Mathf.Abs(w.cx - p.x) - w.halfX, 0f);
+            float dy = Mathf.Max(Mathf.Abs(w.cy - p.y) - w.halfY, 0f);
+            float dist = Mathf.Sqrt(dx * dx + dy * dy);
+            sb.AppendLine($"  [{i}] aabb center=({w.cx:F2},{w.cy:F2}) half=({w.halfX:F2},{w.halfY:F2}) closestDist={dist:F3}");
+        }
+
+        sb.AppendLine("\nCardinal ray hits (compare with expected from procgen):");
+        (string name, float c, float s)[] dirs =
+        {
+            ("E  ", 1f, 0f), ("NE ", 0.707f, 0.707f),
+            ("N  ", 0f, 1f), ("NW ", -0.707f, 0.707f),
+            ("W  ", -1f, 0f), ("SW ", -0.707f, -0.707f),
+            ("S  ", 0f, -1f), ("SE ", 0.707f, -0.707f)
+        };
+        foreach (var d in dirs)
+        {
+            float hit = CastRayLength(p, d.c, d.s);
+            sb.AppendLine($"  {d.name} dist={hit:F3}");
+        }
+
+        Logger.Info(sb.ToString(), "BackroomsVisionDiag");
+        Utils.SendMessage($"VisionDiag dumped to log (cell={pCell}, nearbyAabbs={_nearbyAabbs.Count}). See LogOutput.log", targetPid);
     }
 
     // Phase 2: Seeded chunk procgen
     // Backrooms 風: 部屋境界に決定論的 opening、それ以外は壁
 
     private const int ChunkSize = 16;
-    private const int GenerationRadius = 1; // 3x3 = 9 チャンク = 2304 タイル
+    // GenerationRadius: 1 = 3×3 chunks = 2304 tiles (≈ 旧 baseline) / 0 = 1 chunk = 256 tiles (極小モード)
+    // 2026-05-22 v3: GenRad=2 (6400 tiles = 11k 子 SR) は inactive scene 管理 overhead で FPS=30
+    //   active 数は cull で同じ ~492 SR でも、inactive 11k の per-frame 走査が効く
+    // 10× 達成は streaming chunks (chunk 動的 destroy/create) への拡張必須
+    private const int BaselineGenerationRadius = 1;
+    private const int ReducedGenerationRadius = 0;
+    private static int GenerationRadius => (Main.BackroomsReduceProcgen?.Value ?? false) ? ReducedGenerationRadius : BaselineGenerationRadius;
     private const int RoomSize = 6;
 
-    public static void GenerateLobby(uint seed, byte targetPid)
+    public static void GenerateLobby(uint seed, byte targetPid, bool silent = false)
     {
         if (LobbyBehaviour.Instance == null)
         {
-            Utils.SendMessage("Not in lobby", targetPid);
+            if (!silent) Utils.SendMessage("Not in lobby", targetPid);
             return;
         }
 
@@ -430,20 +527,140 @@ public static class BackroomsLobby
         }
 
         SpawnedTiles.Clear();
+        SpawnedTilePositions.Clear();
         WallAabbs.Clear();
 
         Vector2 origin = PlayerControl.LocalPlayer.Pos();
         int centerCx = Mathf.FloorToInt(origin.x / ChunkSize);
         int centerCy = Mathf.FloorToInt(origin.y / ChunkSize);
 
+        // spawn ループ前に cull center を 1 回だけ取得 (interop 削減)。
+        // SpawnTile が圏外なら inactive で生成 → bulk sweep 回避
+        _spawnCullCenter = PlayerControl.LocalPlayer.GetTruePosition();
+        _spawnCullCenterValid = true;
+
         int generated = 0;
         for (int dcx = -GenerationRadius; dcx <= GenerationRadius; dcx++)
         for (int dcy = -GenerationRadius; dcy <= GenerationRadius; dcy++)
             generated += GenerateChunk(centerCx + dcx, centerCy + dcy, seed);
 
+        _spawnCullCenterValid = false;
+
+        // 2026-05-21: spawn-in-wall 対策。procgen は player cell を考慮しないので
+        // vanilla lobby spawn (~ -0.2, 1.3) → cell (0,1) が WallV になり player が壁中に
+        // 詰まる事故が起きる (TP 廃止に伴い顕在化)。player + 4 cardinal cell を強制 floor 化。
+        // origin は body center (Pos) で 0.36u 高い → cell が 1 ズレるので足元 (GetTruePosition)
+        // で再取得。collision/vision と同じ cell に揃える ([[reference_pos_vs_gettrueposition]])
+        EnsureSpawnFloor(PlayerControl.LocalPlayer.GetTruePosition());
+
         int chunkCount = (GenerationRadius * 2 + 1) * (GenerationRadius * 2 + 1);
-        Utils.SendMessage($"Gen seed={seed}: wiped {wiped}, generated {generated} tiles in {chunkCount} chunks around ({centerCx},{centerCy})", targetPid);
-        Logger.Info($"GenerateLobby seed={seed} chunks={chunkCount} tiles={generated} center=({centerCx},{centerCy})", "BackroomsGen");
+        int activeAfterSpawn = 0;
+        for (int i = 0; i < SpawnedTiles.Count; i++)
+            if (SpawnedTiles[i] != null && SpawnedTiles[i].activeSelf) activeAfterSpawn++;
+        if (!silent)
+            Utils.SendMessage($"Gen seed={seed}: wiped {wiped}, generated {generated} tiles ({activeAfterSpawn} active) in {chunkCount} chunks around ({centerCx},{centerCy})", targetPid);
+        Logger.Info($"GenerateLobby seed={seed} chunks={chunkCount} tiles={generated} active={activeAfterSpawn} center=({centerCx},{centerCy})", "BackroomsGen");
+    }
+
+    public static void DumpCullInfo(byte targetPid)
+    {
+        int total = SpawnedTiles.Count;
+        int active = 0;
+        for (int i = 0; i < total; i++)
+            if (SpawnedTiles[i] != null && SpawnedTiles[i].activeSelf) active++;
+        string msg = $"Cull: {active}/{total} active (radius={CullRadius}u, _inBackrooms={_inBackrooms}, _cullValid={_cullValid}, GenRad={GenerationRadius})";
+        Utils.SendMessage(msg, targetPid);
+        Logger.Info(msg, "BackroomsCull");
+    }
+
+    // scene 全体 Renderer scan — vanilla lobby の何が EnterBackrooms 経路で disable されてないか診断
+    // Scene.GetRootGameObjects() は IL2CPP strip で使えないので FindObjectsOfType<Renderer> 経由
+    public static void DumpSceneRenderers(byte targetPid)
+    {
+        StringBuilder sb = new();
+        sb.AppendLine("=== Scene Renderer Inventory ===");
+
+        Renderer[] all = Object.FindObjectsOfType<Renderer>(true);
+        sb.AppendLine($"FindObjectsOfType<Renderer>(true) = {all.Length}");
+
+        // root transform name で集計
+        Dictionary<string, (int en, int dis, string layer)> byRoot = [];
+        int totalEnabled = 0, totalDisabled = 0;
+        foreach (Renderer r in all)
+        {
+            if (r == null) continue;
+            Transform root = r.transform;
+            while (root.parent != null) root = root.parent;
+            string key = root.name;
+            bool isOn = r.enabled && r.gameObject.activeInHierarchy;
+            if (isOn) totalEnabled++; else totalDisabled++;
+            if (!byRoot.TryGetValue(key, out (int en, int dis, string layer) v))
+                v = (0, 0, LayerMask.LayerToName(root.gameObject.layer));
+            if (isOn) v.en++; else v.dis++;
+            byRoot[key] = v;
+        }
+        // counts 降順で sort
+        List<KeyValuePair<string, (int en, int dis, string layer)>> sorted = [];
+        foreach (var kv in byRoot) sorted.Add(kv);
+        sorted.Sort((a, b) => (b.Value.en + b.Value.dis).CompareTo(a.Value.en + a.Value.dis));
+
+        foreach (var kv in sorted)
+        {
+            int sum = kv.Value.en + kv.Value.dis;
+            sb.AppendLine($"  '{kv.Key}' L={kv.Value.layer}: en={kv.Value.en} dis={kv.Value.dis}  (total {sum})");
+        }
+        sb.AppendLine($"Total: enabled={totalEnabled} disabled={totalDisabled}");
+        sb.AppendLine($"LobbyBehaviour.Instance.transform.root: {(LobbyBehaviour.Instance != null ? LobbyBehaviour.Instance.transform.root.name : "null")}");
+
+        Utils.SendMessage($"Scene renderers: en={totalEnabled} dis={totalDisabled} across {sorted.Count} roots. See log.", targetPid);
+        Logger.Info(sb.ToString(), "BackroomsShipDiag");
+    }
+
+    // spawn 周辺の wall を強制 floor 化。player + 上下左右 4 cell の計 5 cell
+    private static void EnsureSpawnFloor(Vector2 spawnPos)
+    {
+        int spx = Mathf.RoundToInt(spawnPos.x);
+        int spy = Mathf.RoundToInt(spawnPos.y);
+
+        (int x, int y)[] clearCells =
+        {
+            (spx, spy),
+            (spx + 1, spy), (spx - 1, spy),
+            (spx, spy + 1), (spx, spy - 1)
+        };
+
+        int patched = 0;
+        foreach ((int cx, int cy) in clearCells)
+            if (TryReplaceWallWithFloor(cx, cy)) patched++;
+
+        if (patched > 0)
+            Logger.Info($"EnsureSpawnFloor: patched {patched} cells around ({spx},{spy})", "BackroomsGen");
+    }
+
+    private static bool TryReplaceWallWithFloor(int cx, int cy)
+    {
+        for (int i = SpawnedTiles.Count - 1; i >= 0; i--)
+        {
+            GameObject t = SpawnedTiles[i];
+            if (t == null) continue;
+            Vector3 pos = t.transform.position;
+            if (Mathf.RoundToInt(pos.x) != cx || Mathf.RoundToInt(pos.y) != cy) continue;
+            if (!t.name.Contains("wall")) return false; // already floor
+
+            for (int j = WallAabbs.Count - 1; j >= 0; j--)
+            {
+                var w = WallAabbs[j];
+                if (Mathf.RoundToInt(w.cx) == cx && Mathf.RoundToInt(w.cy) == cy)
+                    WallAabbs.RemoveAt(j);
+            }
+
+            Object.Destroy(t);
+            SpawnedTiles.RemoveAt(i);
+            SpawnedTilePositions.RemoveAt(i); // index 同期維持
+            SpawnTile("floor", new Vector2(cx, cy));
+            return true;
+        }
+        return false;
     }
 
     private enum CellKind { Floor, WallH, WallV }
@@ -523,32 +740,35 @@ public static class BackroomsLobby
         return h;
     }
 
-    // Phase 3: Backrooms 入退場 (Matrix 構造の心臓部)
-    // モッド client は遠隔座標 (BackroomsX, BackroomsY) に物理移動する
-    // 非モッド client から見るとホストが通常ロビーの外へフェードアウト → Backrooms 内部の動きは観測不能
-
-    private const float BackroomsX = 100f;
-    private const float BackroomsY = 100f;
+    // Phase 3 改 (2026-05-21): TP 廃止 — モッドクライアント目線でバニラロビーを「上書き」
+    // する Matrix 構造。プレイヤーは vanilla 座標に居たまま、SR 全 disable + 周囲に procgen 展開
+    // で Backrooms が「見える」。非モッドクライアントは vanilla 船を見続け、モッドクライアント
+    // 同士は互いに Backrooms 内を歩いて見える
 
     // vanilla shadow hijack は 2026-05-21 dead (lobby で LightSource activation 不可、SetupLightingForGameplay
     // が ShipStatus 依存で NRE)。Layer 10 const は /bblightprobe diag で参照のため残置
     private const int ShadowLayer = 10;
 
     private static bool _inBackrooms;
+    private static uint _lastSeed; // /bbvisdiag で procgen 再現用
 
-    public static void EnterBackrooms(uint seed, byte targetPid)
+    public static void EnterBackrooms(uint seed, byte targetPid, bool silent = false)
     {
         if (LobbyBehaviour.Instance == null)
         {
-            Utils.SendMessage("Not in lobby", targetPid);
+            if (!silent) Utils.SendMessage("Not in lobby", targetPid);
             return;
         }
 
         if (PlayerControl.LocalPlayer == null) return;
 
-        // 1. ロビー collider を disable (見えない壁を消して移動自由化)
-        int disabled = 0;
-        if (DisabledColliders.Count == 0)
+        // 1. ロビー collider + Renderer を disable
+        //    2026-05-22 v3: 旧コードは `Count == 0` ゲートで stale Unity ref (前 LobbyBehaviour
+        //    instance の死 ref) が list 内に残ってると skip → 新 LobbyBehaviour の船が visible に。
+        //    user が lobby → main menu → 新 lobby で再現。dead-ref を RemoveAll で除去してから判定
+        int disabledCols = 0;
+        DisabledColliders.RemoveAll(c => c == null);
+        if (!_inBackrooms || DisabledColliders.Count == 0)
         {
             Collider2D[] colliders = LobbyBehaviour.Instance.GetComponentsInChildren<Collider2D>(true);
             int shipMask = Constants.ShipOnlyMask;
@@ -559,22 +779,38 @@ public static class BackroomsLobby
                 if (!isShip || !c.enabled) continue;
                 c.enabled = false;
                 DisabledColliders.Add(c);
-                disabled++;
+                disabledCols++;
             }
         }
 
-        // 2. Backrooms 座標へ瞬間移動 (Utils.TP は EAC 例外登録済)
-        PlayerControl.LocalPlayer.TP(new Vector2(BackroomsX, BackroomsY));
+        // 2. バニラ船 Renderer を全 disable (モッドクライアント目線で船を完全に隠す)
+        //    SpriteRenderer + ParticleSystemRenderer (流れ星/星空) + MeshRenderer を全部 catch
+        int disabledRs = 0;
+        DisabledRenderers.RemoveAll(r => r == null);
+        if (!_inBackrooms || DisabledRenderers.Count == 0)
+        {
+            Renderer[] rs = LobbyBehaviour.Instance.GetComponentsInChildren<Renderer>(true);
+            foreach (Renderer r in rs)
+            {
+                if (r == null || !r.enabled) continue;
+                r.enabled = false;
+                DisabledRenderers.Add(r);
+                disabledRs++;
+            }
+        }
 
-        // 3. 新座標を中心に procgen 生成
-        GenerateLobby(seed, targetPid);
+        // 3. プレイヤー位置を中心に procgen (TP しない — player はそのまま)
+        _lastSeed = seed;
+        GenerateLobby(seed, targetPid, silent);
 
         // 4. custom mesh 視界システム起動 (vanilla hijack 路線は dead — reference 参照)
         CreateVision();
         _visionPaused = false;
         _inBackrooms = true;
+        _lastVisionValid = false; // idle skip cache invalidate — 次フレームで強制 rebuild
+        _cullValid = false; // 距離 cull cache invalidate — 次フレで全 tile sweep
 
-        Logger.Info($"Entered Backrooms at ({BackroomsX},{BackroomsY}) seed={seed} disabled={disabled}", "BackroomsGen");
+        Logger.Info($"Entered Backrooms (no-TP) seed={seed} disabledCols={disabledCols} disabledRs={disabledRs} tiles={SpawnedTiles.Count}", "BackroomsGen");
     }
 
     public static void ExitBackrooms(byte targetPid)
@@ -590,12 +826,11 @@ public static class BackroomsLobby
         // 0. custom mesh 視界システム停止
         _inBackrooms = false;
         _visionPaused = false;
+        _lastVisionValid = false;
+        _cullValid = false;
         DestroyVision();
 
-        // 1. ロビー中央へ帰還 TP
-        PlayerControl.LocalPlayer.TP(new Vector2(0f, 0f));
-
-        // 2. Backrooms タイル全消去
+        // 1. Backrooms タイル全消去
         int wiped = 0;
         foreach (GameObject go in SpawnedTiles)
         {
@@ -605,40 +840,125 @@ public static class BackroomsLobby
         }
 
         SpawnedTiles.Clear();
+        SpawnedTilePositions.Clear();
         WallAabbs.Clear();
 
-        // 3. ロビー collider 復元
-        int restored = 0;
+        // 2. ロビー collider 復元
+        int restoredC = 0;
         foreach (Collider2D c in DisabledColliders)
         {
             if (c == null) continue;
             c.enabled = true;
-            restored++;
+            restoredC++;
         }
 
         DisabledColliders.Clear();
 
-        Utils.SendMessage($"Exited Backrooms. Cleared {wiped} tiles, restored {restored} colliders.", targetPid);
-        Logger.Info($"Exited Backrooms cleared={wiped} restored={restored}", "BackroomsGen");
+        // 3. バニラ Renderer 復元
+        int restoredR = 0;
+        foreach (Renderer r in DisabledRenderers)
+        {
+            if (r == null) continue;
+            r.enabled = true;
+            restoredR++;
+        }
+
+        DisabledRenderers.Clear();
+
+        Utils.SendMessage($"Exited Backrooms. Cleared {wiped} tiles, restored {restoredC} cols + {restoredR} SRs.", targetPid);
+        Logger.Info($"Exited Backrooms cleared={wiped} restoredC={restoredC} restoredR={restoredR}", "BackroomsGen");
     }
 
-    // Phase 4: 視界システム (corner-based polygon raycast — YouTube short / doc/amongusfog.md 通り)
+    // ロビー→ゲーム遷移時の cleanup。root GO のタイル / visionGO を破壊。
+    // SR/Collider 参照は scene unload で自動的に消えるので list クリアだけ
+    public static void OnGameStart()
+    {
+        if (!_inBackrooms && SpawnedTiles.Count == 0 && _visionGO == null) return;
+
+        _inBackrooms = false;
+        _visionPaused = false;
+        _lastVisionValid = false;
+        _cullValid = false;
+        DestroyVision();
+
+        int wiped = 0;
+        foreach (GameObject go in SpawnedTiles)
+        {
+            if (go == null) continue;
+            Object.Destroy(go);
+            wiped++;
+        }
+
+        SpawnedTiles.Clear();
+        SpawnedTilePositions.Clear();
+        WallAabbs.Clear();
+        DisabledColliders.Clear();
+        DisabledRenderers.Clear();
+
+        Logger.Info($"OnGameStart cleanup: wiped {wiped} tiles", "BackroomsGen");
+    }
+
+    // session 跨ぎ (lobby → main menu → 新 lobby) で stale state を捨てる。
+    // OnGameStart は ShipStatus.Awake hook なので game→lobby 復帰時しか走らない。
+    // 新 LobbyBehaviour Start 時に呼び、_inBackrooms / 死 ref を全クリア
+    public static void OnLobbyReload()
+    {
+        bool wasActive = _inBackrooms || SpawnedTiles.Count > 0 || _visionGO != null || DisabledRenderers.Count > 0;
+        if (!wasActive) return;
+
+        _inBackrooms = false;
+        _visionPaused = false;
+        _lastVisionValid = false;
+        _cullValid = false;
+        _spawnCullCenterValid = false;
+        _visionGO = null; // scene unload で destroy 済 — 参照だけクリア (DestroyVision 経由は不要)
+        _visionMF = null;
+        _visionMesh = null;
+        _visionMat = null;
+
+        SpawnedTiles.Clear();
+        SpawnedTilePositions.Clear();
+        WallAabbs.Clear();
+        DisabledColliders.Clear();
+        DisabledRenderers.Clear();
+
+        Logger.Info("OnLobbyReload: stale Backrooms state cleared", "BackroomsGen");
+    }
+
+    // Phase 4: 視界システム (corner-aware polygon raycast — 2026-05-21 corner ray 実装)
     //   1. spawn 時 cache 済み WallAabbs から VisionRadius 圏内を pre-filter
-    //   2. 8 cardinal 保険レイ + 各 wall corner に ±ε / 直接の 3 本レイ
-    //   3. (ray 角度, hit 距離) を angle 順にソート
-    //   4. (inner @ hit_dist, outer @ DarkRadius) の donut mesh をハードエッジ・solid black で構築
-    //   5. mesh は player に追従、List ベース buffers で variable size に対応 (Mesh.SetVertices は internal buf 再利用)
+    //   2. base = 360 uniform ray fan (隙間ない coverage の保険)
+    //   3. + 各 visible AABB corner に ±ε rays (corner leak 防止 — 「壁角の向こうに広い扇形が見える」バグ)
+    //   4. (angle, dist) を struct で持って angle 順にソート
+    //   5. (inner @ hit_dist, outer @ DarkRadius) の donut mesh をハードエッジ・solid black で構築
     //   ※ 直接ヒット点から direction を逆算するのは NG (inside-AABB で hit≈player → atan2(0,0)=0 で
     //      全ヒット同一方向に collapse → 一方向だけ見える縮退多角形バグ)。angle 自体を保持して sort/build に使う
 
-    private const float VisionRadius = 8f;     // 可視半径
-    // ray dist のフロア値 — player radius (~0.3) 程度。これより大きいと「触れた壁の先が見える」バグ発生
-    // (polygon 内側が壁を超えて player から離れて配置されるため、壁の向こうの floor が dark mesh で覆われない)
-    private const float MinHitDistance = 0.3f;
-    private const float DarkRadius = 60f;      // dark mesh 外周
-    // 360 ray fan (1° 刻み)。Mesh.SetVertices + static bounds で marshal/recalculate コスト削減
-    // を試す。vanilla hijack は 2026-05-21 dead (lobby で LightSource activation 不可、reference 参照)
-    private const int RayFanCount = 360;
+    // 2026-05-22 v4: vision/dark radius を絞って GPU 負荷 + corner ray 数を削減 (user request)
+    //   8u → 5u: 視界半径 (60% に絞ると lit area 面積は 39%、より「Backrooms らしい」狭視界)
+    //   60u → 25u: dark mesh 外周。プレイヤー本体が見える範囲を覆えれば十分 (camera ortho ~3.5u)
+    private const float VisionRadius = 5f;
+    // ray dist のフロア値 — 退化頂点 (distance≈0 で全方位 collapse) の防止だけが目的。
+    // ここを player radius (~0.15) より大きくすると「触れた壁の先が見える」バグが発生する。
+    // 0.05 は player collider が物理的に到達不可能な距離なので、実プレイ中は一度も clamp しない。
+    private const float MinHitDistance = 0.05f;
+    private const float DarkRadius = 25f;      // dark mesh 外周 (60→25: 描画 fill 量 17% に縮小)
+    private const int MaxRayFanCount = 360;    // base ray fan 上限 (cos/sin table 確保サイズ)
+    private const float CornerEps = 0.0005f;   // corner ray の左右オフセット (~0.03°)
+    // pre-allocated buffer の上限。base 360 + max 256 corners × 2 = 872 < 1024
+    private const int MaxRays = 1024;
+
+    // ===== 2026-05-22: perf tuning (Client Options トグル経由で差分検証) =====
+    //   ReduceRays      true: base ray 180 / false: 360
+    //   ThrottleVision  true: idle skip 0.001 (sqrt~0.032u) / false: 0.0001 (sqrt~0.01u)
+    // ※ PartialUpload は画面崩れで没 (2026-05-22) — full vert upload に固定
+    private const int BaselineRayFanCount = 360;
+    private const int ReducedRayFanCount = 180;
+    private const float BaselineIdleSkipThreshold = 0.0001f;
+    private const float ThrottledIdleSkipThreshold = 0.001f;
+
+    private static int RayFanCount => (Main.BackroomsReduceRays?.Value ?? false) ? ReducedRayFanCount : BaselineRayFanCount;
+    private static float IdleSkipThreshold => (Main.BackroomsThrottleVision?.Value ?? false) ? ThrottledIdleSkipThreshold : BaselineIdleSkipThreshold;
 
     private static GameObject _visionGO;
     private static MeshFilter _visionMF;
@@ -647,17 +967,58 @@ public static class BackroomsLobby
 
     private static readonly List<(float cx, float cy, float halfX, float halfY)> _nearbyAabbs = new(64);
 
-    // 静的事前計算バッファ — RayFanCount は const なので 1 度組んだら触らない
-    //   _rayCos/Sin: 毎フレーム 720 回の Mathf.Cos/Sin を回避
-    //   _vertsBuf  : 毎フレーム new Vector3[720] を回避 (GC 圧軽減)
-    //   _trisBuf   : 三角形 index は topology 由来で完全に不変 — 1 度 SetTriangles すれば永久
-    //   outer ring (i+N) も Vec3 が固定なので pre-fill
-    private static readonly float[] _rayCos = new float[RayFanCount];
-    private static readonly float[] _raySin = new float[RayFanCount];
-    private static readonly Vector3[] _vertsBuf = new Vector3[2 * RayFanCount];
-    private static readonly int[] _trisBuf = new int[6 * RayFanCount];
-    private static bool _staticBuffersBuilt;
-    private static bool _trisUploaded;
+    // ray データ 1 件
+    // IL2CPP の Comparer<T>.Default は値型 IComparable<T> で finicky なので、
+    // 明示 IComparer<RayHit> インスタンスを Array.Sort に渡す
+    private struct RayHit
+    {
+        public float Angle;
+        public float Dist;
+        public float Cos;
+        public float Sin;
+    }
+
+    private sealed class RayHitAngleComparer : IComparer<RayHit>
+    {
+        public int Compare(RayHit x, RayHit y) => x.Angle.CompareTo(y.Angle);
+    }
+
+    private static readonly RayHitAngleComparer _rayHitComparer = new();
+
+    // 静的事前計算バッファ — GC churn ゼロ
+    //   _rayCos/Sin: base ray の cos/sin precompute (MaxRayFanCount で確保、_rayFanCount 分だけ使用)
+    //   _rays      : この frame で cast した全 ray を一旦詰める作業領域 (sort 後 vertex/tri 化)
+    //   _vertsBuf  : 上限サイズ確保。未使用 slot は前 frame の stale data だが triangle が指さないので無害
+    //   _trisBuf   : 未使用 triangle slot は全 index=0 (degenerate) で埋める → Mesh.Clear 不要
+    private static readonly float[] _rayCos = new float[MaxRayFanCount];
+    private static readonly float[] _raySin = new float[MaxRayFanCount];
+    private static readonly RayHit[] _rays = new RayHit[MaxRays];
+    private static readonly Vector3[] _vertsBuf = new Vector3[2 * MaxRays];
+    private static readonly int[] _trisBuf = new int[6 * MaxRays];
+    private static int _cosTableBuiltFor; // 0 = 未構築、>0 = この値で build 済
+
+    // Idle skip: 直前 rebuild 時の player 位置。動いてなければ rebuild も transform 更新も skip。
+    // ロビーは idle 時間が支配的なので、これ単体で大幅な FPS 回復が見込める
+    private static Vector2 _lastVisionPlayer;
+    private static bool _lastVisionValid;
+
+    // ===== 距離 cull システム (2026-05-22) =====
+    // 視界 (VisionRadius=5u) 外は dark mesh で必ず黒く塗られるので、cull radius は vision 同等で十分。
+    //   CullRadius=7u: vision 5u + safety 2u → walk 1 cycle (2u) 内に新タイル active 化、popup 不可視
+    //   active 領域 π×7² ≈ 154 cells (旧 314 の半分)
+    // Wall AABB cache は SetActive 状態と独立に保持されるので視界 raycast は正しく occlude する。
+    // CullMoveSqrThr=4 (sqrt=2u) — player 2u 進むまで cull 再判定 skip
+    private static Vector2 _lastCullPlayer;
+    private static bool _cullValid;
+    private const float CullRadius = 7f;
+    private const float CullRadiusSqr = CullRadius * CullRadius;
+    private const float CullMoveSqrThreshold = 4f;
+    // SpawnTile 内 inline cull 用の cache。GenerateLobby が spawn ループ前に 1 度だけセット
+    private static Vector2 _spawnCullCenter;
+    private static bool _spawnCullCenterValid;
+    // idle 判定閾値は _idleSkipThreshold に移行 (chat command で動的変更可)。
+    // baseline 0.0001 → sqrt=0.01u → walk 中 (0.083u/frame) 毎フレーム rebuild
+    // optimized 0.001  → sqrt=0.0316u → walk 中 ~2.5 frame 毎 rebuild (rebuild 30fps)
 
     private static void CreateVision()
     {
@@ -665,7 +1026,9 @@ public static class BackroomsLobby
 
         _visionGO = new GameObject("BackroomsVision");
         _visionGO.transform.SetParent(null);
-        _visionGO.transform.position = new Vector3(BackroomsX, BackroomsY, 0f);
+        // 初期位置は player 直下。UpdateVision の最初の非 skip フレームで上書きされる
+        Vector2 initPos = PlayerControl.LocalPlayer != null ? PlayerControl.LocalPlayer.GetTruePosition() : Vector2.zero;
+        _visionGO.transform.position = new Vector3(initPos.x, initPos.y, 0f);
 
         _visionMF = _visionGO.AddComponent<MeshFilter>();
         _visionMesh = new Mesh { name = "BackroomsVisionMesh" };
@@ -720,37 +1083,22 @@ public static class BackroomsLobby
         _visionMF = null;
         _visionMesh = null;
         _visionMat = null;
-        _trisUploaded = false; // 次回 CreateVision 時に再アップロード必要
         Logger.Info("Vision destroyed", "BackroomsGen");
     }
 
-    private static void EnsureStaticBuffers()
+    // base ray の cos/sin だけ事前計算。RayFanCount 変化時に再構築。
+    private static void EnsureCosTable()
     {
-        if (_staticBuffersBuilt) return;
-        const float twoPi = Mathf.PI * 2f;
         int n = RayFanCount;
+        if (_cosTableBuiltFor == n) return;
+        const float twoPi = Mathf.PI * 2f;
         for (int i = 0; i < n; i++)
         {
             float ang = (i / (float)n) * twoPi;
-            float cos = Mathf.Cos(ang);
-            float sin = Mathf.Sin(ang);
-            _rayCos[i] = cos;
-            _raySin[i] = sin;
-            // outer ring (i+n) は player 中心の DarkRadius 円上で固定
-            _vertsBuf[i + n] = new Vector3(cos * DarkRadius, sin * DarkRadius, 0f);
+            _rayCos[i] = Mathf.Cos(ang);
+            _raySin[i] = Mathf.Sin(ang);
         }
-        for (int i = 0; i < n; i++)
-        {
-            int next = (i + 1) % n;
-            int t = i * 6;
-            _trisBuf[t + 0] = i;
-            _trisBuf[t + 1] = i + n;
-            _trisBuf[t + 2] = next + n;
-            _trisBuf[t + 3] = i;
-            _trisBuf[t + 4] = next + n;
-            _trisBuf[t + 5] = next;
-        }
-        _staticBuffersBuilt = true;
+        _cosTableBuiltFor = n;
     }
 
     // 各フレーム呼び出し: player 位置に追従して polygon を再構築
@@ -765,8 +1113,77 @@ public static class BackroomsLobby
     {
         _visionPaused = !_visionPaused;
         if (_visionGO != null) _visionGO.SetActive(!_visionPaused);
+        // pause = 診断モード = 全タイル可視化したい。reactivate して cull 中断
+        if (_visionPaused) ForceActivateAllTiles();
+        _cullValid = false; // 復帰時に再 cull
         Utils.SendMessage($"Vision paused = {_visionPaused}", targetPid);
         Logger.Info($"Vision paused = {_visionPaused}", "BackroomsGen");
+    }
+
+    // 距離 cull: player から CullRadius 圏外の tile を SetActive(false) で Unity 走査から外す
+    // hot path:
+    //   - player 移動 < 2u なら即 return (idle skip と同方針)
+    //   - SpawnedTilePositions の cached Vector2 で interop 回避
+    //   - 状態遷移時 (active↔inactive) だけ SetActive 呼び出し → 同状態 skip で interop コスト最小化
+    public static void UpdateCulling()
+    {
+        if (!_inBackrooms || _visionPaused) return;
+        if (PlayerControl.LocalPlayer == null) return;
+        if (SpawnedTiles.Count == 0) return;
+
+        Vector2 player = PlayerControl.LocalPlayer.GetTruePosition();
+
+        if (_cullValid)
+        {
+            float ddx = player.x - _lastCullPlayer.x;
+            float ddy = player.y - _lastCullPlayer.y;
+            if (ddx * ddx + ddy * ddy < CullMoveSqrThreshold) return;
+        }
+
+        _lastCullPlayer = player;
+        _cullValid = true;
+
+        float px = player.x;
+        float py = player.y;
+        int n = SpawnedTiles.Count;
+        for (int i = 0; i < n; i++)
+        {
+            GameObject go = SpawnedTiles[i];
+            if (go == null) continue;
+            Vector2 pos = SpawnedTilePositions[i];
+            float ex = pos.x - px;
+            float ey = pos.y - py;
+            bool inRange = ex * ex + ey * ey < CullRadiusSqr;
+            if (go.activeSelf != inRange) go.SetActive(inRange);
+        }
+    }
+
+    // vision pause / diag 時に呼ぶ。全 tile を強制 activate
+    private static void ForceActivateAllTiles()
+    {
+        for (int i = 0; i < SpawnedTiles.Count; i++)
+        {
+            GameObject go = SpawnedTiles[i];
+            if (go != null && !go.activeSelf) go.SetActive(true);
+        }
+    }
+
+    // toggle 切替時に呼ぶ。次フレームで cos table 再構築 + idle skip 再評価
+    public static void InvalidatePerfCache()
+    {
+        _lastVisionValid = false;
+        _cosTableBuiltFor = 0;
+    }
+
+    // procgen toggle 切替時に呼ぶ。Backrooms 滞在中なら新 GenerationRadius で再生成
+    public static void RegenerateIfActive()
+    {
+        if (!_inBackrooms) return;
+        if (LobbyBehaviour.Instance == null || PlayerControl.LocalPlayer == null) return;
+        GenerateLobby(_lastSeed != 0u ? _lastSeed : 1u, byte.MaxValue, silent: true);
+        _lastVisionValid = false; // 新タイル AABB に対し vision rebuild
+        _cullValid = false; // 新 tile set に対し cull sweep
+        Logger.Info($"RegenerateIfActive: regen with GenerationRadius={GenerationRadius} tiles={SpawnedTiles.Count}", "BackroomsPerf");
     }
 
     public static void UpdateVision()
@@ -775,9 +1192,25 @@ public static class BackroomsLobby
         if (_visionPaused) return;
         if (PlayerControl.LocalPlayer == null) return;
 
-        EnsureStaticBuffers();
+        // GetTruePosition() = 足元位置。Pos() (=transform.position) は body center で
+        // ~0.36 unit 上 → wall_h AABB に body が被ると inside-AABB 判定が誤発動して vision が
+        // small box に縮む症状の元凶。視界は床レベル (足元) を基準に展開すべき。
+        Vector2 player = PlayerControl.LocalPlayer.GetTruePosition();
 
-        Vector2 player = PlayerControl.LocalPlayer.Pos();
+        // Idle skip: player が動いていなければ rebuild も transform 更新も skip (transform 据置=最大効果)。
+        // 閾値超えで初めて _lastVisionPlayer を更新 → 微小ドリフトの累積で誤更新を防ぐ
+        if (_lastVisionValid)
+        {
+            float dx = player.x - _lastVisionPlayer.x;
+            float dy = player.y - _lastVisionPlayer.y;
+            if (dx * dx + dy * dy < IdleSkipThreshold) return;
+        }
+
+        _lastVisionPlayer = player;
+        _lastVisionValid = true;
+
+        EnsureCosTable();
+
         _visionGO.transform.position = new Vector3(player.x, player.y, 0f);
 
         // 1. VisionRadius 圏内の wall AABB を pre-filter
@@ -792,32 +1225,100 @@ public static class BackroomsLobby
             _nearbyAabbs.Add(w);
         }
 
-        // 2. 360 ray fan — 直接 _vertsBuf に書き込み (中間 list 不要)
-        int n = RayFanCount;
-        for (int i = 0; i < n; i++)
+        int count = 0;
+        const float twoPi = Mathf.PI * 2f;
+
+        // 2. Base uniform ray fan (gap-free coverage の保険)
+        int rfc = RayFanCount;
+        for (int i = 0; i < rfc; i++)
         {
             float cos = _rayCos[i];
             float sin = _raySin[i];
             float dist = CastRayLength(player, cos, sin);
-            _vertsBuf[i] = new Vector3(cos * dist, sin * dist, 0f);
+            _rays[count].Angle = (i / (float)rfc) * twoPi;
+            _rays[count].Dist = dist;
+            _rays[count].Cos = cos;
+            _rays[count].Sin = sin;
+            count++;
         }
 
-        // 3. mesh upload
-        //    - SetVertices(): mesh.vertices setter より少し速い (validation 省略) — Unity 公式推奨
-        //    - SetTriangles(_, 0, false): 第3引数 calculateBounds=false で per-frame bounds 計算回避
-        //    - static bounds は CreateVision で 1 回設定 (DarkRadius を覆う大 AABB)
-        _visionMesh.SetVertices(_vertsBuf);
-        if (!_trisUploaded)
+        // 3. Corner rays — 各 visible AABB corner に ±ε rays で sharp shadow boundary を作る
+        //    これがないと角の向こうに広い扇形 (corner leak) が visible 領域として残る
+        for (int wi = 0; wi < _nearbyAabbs.Count && count + 8 < MaxRays; wi++)
         {
-            _visionMesh.SetTriangles(_trisBuf, 0, calculateBounds: false);
-            _trisUploaded = true;
+            var w = _nearbyAabbs[wi];
+            for (int ci = 0; ci < 4; ci++)
+            {
+                float cx = w.cx + ((ci & 1) == 0 ? -w.halfX : w.halfX);
+                float cy = w.cy + ((ci & 2) == 0 ? -w.halfY : w.halfY);
+                float dxc = cx - player.x;
+                float dyc = cy - player.y;
+                float d2 = dxc * dxc + dyc * dyc;
+                if (d2 > r2 || d2 < 1e-6f) continue; // 圏外 or origin overlap は skip
+                float baseAng = Mathf.Atan2(dyc, dxc);
+                for (int k = 0; k < 2; k++)
+                {
+                    float a = baseAng + (k == 0 ? -CornerEps : CornerEps);
+                    // [-π, π] → [0, 2π] に正規化 (sort の angle 単調性を維持)
+                    if (a < 0f) a += twoPi;
+                    else if (a >= twoPi) a -= twoPi;
+                    float ca = Mathf.Cos(a);
+                    float sa = Mathf.Sin(a);
+                    _rays[count].Angle = a;
+                    _rays[count].Dist = CastRayLength(player, ca, sa);
+                    _rays[count].Cos = ca;
+                    _rays[count].Sin = sa;
+                    count++;
+                }
+            }
         }
+
+        // 4. Sort by angle — 明示 IComparer 渡し (IL2CPP default Comparer 不安定回避)
+        Array.Sort(_rays, 0, count, _rayHitComparer);
+
+        // 5. Build vertices: inner ring [0..count) は hit dist、outer ring [count..2*count) は DarkRadius
+        for (int i = 0; i < count; i++)
+        {
+            float c = _rays[i].Cos;
+            float s = _rays[i].Sin;
+            float d = _rays[i].Dist;
+            _vertsBuf[i] = new Vector3(c * d, s * d, 0f);
+            _vertsBuf[i + count] = new Vector3(c * DarkRadius, s * DarkRadius, 0f);
+        }
+
+        // 6. Build triangles (donut topology — slice i は inner[i,next] / outer[i,next] の 2 tri)
+        for (int i = 0; i < count; i++)
+        {
+            int next = (i + 1) % count;
+            int t = i * 6;
+            _trisBuf[t + 0] = i;
+            _trisBuf[t + 1] = i + count;
+            _trisBuf[t + 2] = next + count;
+            _trisBuf[t + 3] = i;
+            _trisBuf[t + 4] = next + count;
+            _trisBuf[t + 5] = next;
+        }
+
+        // 7. 未使用 triangle slot は全 index=0 で埋めて degenerate triangle 化
+        //    (Mesh.Clear() を呼ばずに variable count を扱う trick)
+        int validTris = count * 6;
+        for (int i = validTris; i < _trisBuf.Length; i++)
+            _trisBuf[i] = 0;
+
+        // 8. Upload
+        //    vertex buffer 全体 (2*MaxRays) を毎フレーム送るが、未使用 slot は triangle が指さないので無害。
+        //    partial upload (count*2 だけ送る) は 2026-05-22 に試したが画面崩れで没。
+        //    static bounds は CreateVision で 1 度設定済 → calculateBounds=false
+        _visionMesh.SetVertices(_vertsBuf);
+        _visionMesh.SetTriangles(_trisBuf, 0, _trisBuf.Length, 0, calculateBounds: false);
     }
 
     // 与えられた単位方向 (cos, sin) に origin から ray を撃ち、最近接の AABB ヒット距離を返す
-    // ヒットなし → VisionRadius、origin が AABB 内 → その AABB は skip (player が壁の縁に
-    // float 精度で「内側」判定されると全方位 t=0 になり screen 全黒のバグ発生 — 触れた壁は
-    // 遮蔽しないものとして扱う = 触れた壁の向こうは普通に見える)
+    // - 通常 (origin が AABB 外): tNear = 入射距離を hit とする
+    // - origin が AABB 内 (player が壁の中に詰まった場合): tFar = 出口距離を hit とする
+    //   → vision が壁の出口表面でクリップされて「壁を貫通して見える」バグを防止
+    //   (2026-05-21: 旧 continue skip ロジックは player が wall_h 内に詰まった時に上方向の
+    //    視界が次の行まで突き抜ける症状の元凶 — VisionDiag で確認済)
     private static float CastRayLength(Vector2 origin, float cos, float sin)
     {
         float tMin = VisionRadius;
@@ -828,10 +1329,6 @@ public static class BackroomsLobby
             float maxX = w.cx + w.halfX;
             float minY = w.cy - w.halfY;
             float maxY = w.cy + w.halfY;
-
-            // origin が AABB 内ならこの壁は無視 (continue) — 全黒バグ回避
-            if (origin.x >= minX && origin.x <= maxX && origin.y >= minY && origin.y <= maxY)
-                continue;
 
             // Slab method
             // 軸平行 ray (cos=0 or sin=0) の罠: 単に t±inf を返すと「origin が slab 外」のケースで
@@ -869,10 +1366,21 @@ public static class BackroomsLobby
             float tFar = Mathf.Min(tx2, ty2);
 
             if (tFar < 0f || tNear > tFar) continue;
-            if (tNear > 0f && tNear < tMin) tMin = tNear;
+
+            if (tNear > 0f)
+            {
+                // 通常ケース: origin が AABB 外、ray が tNear で入射 → tNear を hit に
+                if (tNear < tMin) tMin = tNear;
+            }
+            else if (tFar > 0f)
+            {
+                // origin が AABB 内 (壁に詰まった時): tFar = 出口距離を hit に
+                // → 壁の出口表面で vision がクリップされ、壁を貫通して見えなくなる
+                if (tFar < tMin) tMin = tFar;
+            }
         }
-        // 「壁に張り付くと polygon が dip → 黒の楔が視界に出る」罠を MinHitDistance で防ぐ
-        // (player 周囲 0.5 unit は壁の有無に関わらず常に可視ゾーン化)
+        // MinHitDistance は退化頂点 (全方位 t≈0 で polygon が点に collapse) の防止だけ。
+        // 実ヒット距離はそのまま返す — 壁張り付き時に inner ring が壁の向こうへ食い込まないように。
         return tMin < MinHitDistance ? MinHitDistance : tMin;
     }
 
@@ -1125,6 +1633,19 @@ internal static class BackroomsVisionUpdateHook
 {
     public static void Postfix()
     {
+        BackroomsLobby.UpdateCulling();
         BackroomsLobby.UpdateVision();
+    }
+}
+
+// ロビー→ゲーム遷移時 (ShipStatus.Awake) に root GO のタイル / visionGO を破壊。
+// SetParent(null) のため scene unload では消えない root GO 群を明示的に Destroy
+[HarmonyPatch(typeof(ShipStatus), nameof(ShipStatus.Awake))]
+internal static class BackroomsShipStatusAwakePatch
+{
+    public static void Prefix()
+    {
+        try { BackroomsLobby.OnGameStart(); }
+        catch (Exception ex) { Logger.Warn($"Backrooms OnGameStart failed: {ex.Message}", "BackroomsGen"); }
     }
 }

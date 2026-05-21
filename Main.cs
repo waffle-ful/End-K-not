@@ -217,6 +217,9 @@ public class Main : BasePlugin
     public static ConfigEntry<bool> TryFixStuttering { get; private set; }
     public static ConfigEntry<bool> ShowClientControlGUI { get; private set; }
     public static ConfigEntry<bool> ShareLobbyToDiscord { get; private set; }
+    public static ConfigEntry<bool> BackroomsReduceRays { get; private set; }
+    public static ConfigEntry<bool> BackroomsThrottleVision { get; private set; }
+    public static ConfigEntry<bool> BackroomsReduceProcgen { get; private set; }
     public static ConfigEntry<float> UIScaleFactor { get; private set; }
 
     // Preset Name Options
@@ -346,6 +349,9 @@ public class Main : BasePlugin
         TryFixStuttering = Config.Bind("Client Options", "TryFixStuttering", true);
         ShowClientControlGUI = Config.Bind("Client Options", "ShowClientControlGUI", true);
         ShareLobbyToDiscord = Config.Bind("Client Options", "ShareLobbyToDiscord", false);
+        BackroomsReduceRays = Config.Bind("Client Options", "BackroomsReduceRays", false);
+        BackroomsThrottleVision = Config.Bind("Client Options", "BackroomsThrottleVision", false);
+        BackroomsReduceProcgen = Config.Bind("Client Options", "BackroomsReduceProcgen", false);
         UIScaleFactor = Config.Bind("Client Options", "UIScaleFactor", 1f);
 
         AddComponent<ClientControlGUI>();

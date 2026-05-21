@@ -185,6 +185,9 @@ internal static class ChatCommands
             new("BBShadowDiag", "", Command.UsageLevels.Host, Command.UsageTimes.InLobby, BBShadowDiagCommand, true, true),
             new("BBVisToggle", "", Command.UsageLevels.Host, Command.UsageTimes.InLobby, BBVisToggleCommand, true, true),
             new("BBLightProbe", "", Command.UsageLevels.Host, Command.UsageTimes.InLobby, BBLightProbeCommand, true, true),
+            new("BBVisDiag", "", Command.UsageLevels.Host, Command.UsageTimes.InLobby, BBVisDiagCommand, true, true),
+            new("BBCullInfo", "", Command.UsageLevels.Host, Command.UsageTimes.InLobby, BBCullInfoCommand, true, true),
+            new("BBShipDiag", "", Command.UsageLevels.Host, Command.UsageTimes.InLobby, BBShipDiagCommand, true, true),
             new("Template", "{tag}", Command.UsageLevels.Everyone, Command.UsageTimes.Always, TemplateCommand, true, false, [GetString("CommandArgs.Template.Tag")]),
             new("MessageWait", "{duration}", Command.UsageLevels.Host, Command.UsageTimes.Always, MessageWaitCommand, true, false, [GetString("CommandArgs.MessageWait.Duration")]),
             new("Death", "[id]", Command.UsageLevels.Everyone, Command.UsageTimes.AfterDeath, DeathCommand, true, false, [GetString("CommandArgs.Death.Id")]),
@@ -2473,6 +2476,21 @@ internal static class ChatCommands
     private static void BBLightProbeCommand(PlayerControl player, string text, string[] args)
     {
         BackroomsLobby.ProbeLightSystem(player.PlayerId);
+    }
+
+    private static void BBVisDiagCommand(PlayerControl player, string text, string[] args)
+    {
+        BackroomsLobby.DumpVisionDiagCurrentSeed(player.PlayerId);
+    }
+
+    private static void BBCullInfoCommand(PlayerControl player, string text, string[] args)
+    {
+        BackroomsLobby.DumpCullInfo(player.PlayerId);
+    }
+
+    private static void BBShipDiagCommand(PlayerControl player, string text, string[] args)
+    {
+        BackroomsLobby.DumpSceneRenderers(player.PlayerId);
     }
 
     private static void MyRoleCommand(PlayerControl player, string text, string[] args)

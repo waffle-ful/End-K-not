@@ -52,7 +52,9 @@ public static class Zoom
                                 }
                                 case < 0:
                                 {
-                                    if (GameStates.IsDead || GameStates.IsFreePlay || DebugModeManager.AmDebugger || GameStates.IsLobby)
+                                    // lobby zoom-out は世界観破壊 (Backrooms grid 全露出) のため dev 限定。
+                                    // 2026-05-22: `|| GameStates.IsLobby` を撤去し AmDebugger だけ通す
+                                    if (GameStates.IsDead || GameStates.IsFreePlay || DebugModeManager.AmDebugger)
                                     {
                                         if (Main.orthographicSize < 18.0f)
                                             SetZoomSize(true);
@@ -75,7 +77,8 @@ public static class Zoom
                         }
                         case < 0:
                         {
-                            if (GameStates.IsDead || GameStates.IsFreePlay || DebugModeManager.AmDebugger || GameStates.IsLobby)
+                            // lobby zoom-out は dev 限定 (Backrooms 世界観保護)
+                            if (GameStates.IsDead || GameStates.IsFreePlay || DebugModeManager.AmDebugger)
                             {
                                 if (Main.orthographicSize < 18.0f)
                                     SetZoomSize(true);
