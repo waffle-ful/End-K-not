@@ -290,6 +290,8 @@ public static class BackroomsLobby
                 }
                 // 同じ模様の繰返し感を打ち消す per-cell 向き＋tint 揺らぎ
                 ApplyFloorVariation(sr, go.transform, pos.x, pos.y);
+                // ~2% 確率で汚れシミを重ねて古びたカーペット感を演出
+                MaybeAddFloorStain(go, pos);
                 break;
             default:
                 sr.sprite = BaselineSprite;
@@ -404,11 +406,48 @@ public static class BackroomsLobby
         ApplyFloorVariation(sr, floor.transform, wp.x, wp.y);
     }
 
+    // 床に稀 (~2%) なシミを散らす。BaselineSprite (1x1 white) を暗茶半透明で小さく置くだけ。
+    // 位置 / scale / rotation を cell hash から決定的に決めるので cull の出し入れで変動しない。
+    // 視覚的に不気味感 (古びた汚れたカーペット) を加える役割
+    private static void MaybeAddFloorStain(GameObject parent, Vector2 pos)
+    {
+        int cx = Mathf.RoundToInt(pos.x);
+        int cy = Mathf.RoundToInt(pos.y);
+        uint h = (uint)(cx * 374761393) ^ (uint)(cy * 668265263);
+        h = (h ^ (h >> 13)) * 1274126177u;
+        h ^= h >> 16;
+
+        if ((h % 100u) >= 2u) return; // ~2%
+
+        GameObject stain = new("FloorStain");
+        stain.transform.SetParent(parent.transform, false);
+
+        float scaleSeed = ((h >> 8) & 0xFFu) / 255f;
+        float rotSeed = ((h >> 16) & 0xFFu) / 255f;
+        float scale = 0.3f + scaleSeed * 0.35f;
+        float ox = ((((h >> 4) & 0x0Fu) / 15f) - 0.5f) * 0.4f;
+        float oy = ((((h >> 12) & 0x0Fu) / 15f) - 0.5f) * 0.4f;
+
+        stain.transform.localPosition = new Vector3(ox, oy, 0f);
+        stain.transform.localRotation = Quaternion.Euler(0f, 0f, rotSeed * 360f);
+        stain.transform.localScale = new Vector3(scale, scale, 1f);
+
+        SpriteRenderer sr = stain.AddComponent<SpriteRenderer>();
+        sr.sprite = BaselineSprite;
+        sr.color = new Color(0.18f, 0.13f, 0.07f, 0.55f); // 暗茶半透明
+        sr.sortingLayerName = "Default";
+        sr.sortingOrder = -9; // floor (-10) より前、wall (-5) より後
+    }
+
     // 床テクスチャの「同じ模様が並んでる」感を抑えるための per-cell variation。
-    // cell 座標から決定的 hash を取り、(flipX, flipY, 90°回転) の 8 向き + ±5% 程度の輝度
-    // 揺らぎを割当てる。同じ cell は常に同じ向き＆色になるので cull の出し入れで動かない。
+    // cell 座標から決定的 hash を取り、(flipX, flipY, 90°回転) の 8 向きを割当てる。
+    // 同じ cell は常に同じ向きになるので cull の出し入れでちらつかない。
     // SpriteRenderer.flipX/Y と transform.rotation は frame ごとのコストゼロ。1×1 正方 sprite
     // なので 90° 回転しても bounds は変わらず隣 cell にはみ出さない。
+    //
+    // 過去: 輝度 ±5% の tint も入れていたが、隣接 cell の明暗差が cell 境界を市松模様に
+    // 浮き上がらせて「ブロック感」を生んだので削除 (2026-05-23)。texture seam による
+    // 境目が残るかは flip/rotation 単独で再判定する。
     private static void ApplyFloorVariation(SpriteRenderer sr, Transform target, float worldX, float worldY)
     {
         int cx = Mathf.RoundToInt(worldX);
@@ -421,10 +460,6 @@ public static class BackroomsLobby
         sr.flipY = (h & 2u) != 0;
         if ((h & 4u) != 0)
             target.localRotation = Quaternion.Euler(0f, 0f, 90f);
-        int tintIdx = (int)((h >> 4) & 15u) - 7; // -7..+8
-        float mul = 1f + tintIdx * 0.007f;       // ≈ ±5%
-        Color c = sr.color;
-        sr.color = new Color(c.r * mul, c.g * mul, c.b * mul, c.a);
     }
 
     // Polus 風 outlined dark mass: floor bg + 0.4 wide dark body + 両端 0.025 wide lighter edge highlights
@@ -1158,6 +1193,8 @@ public static class BackroomsLobby
 
         // 4. custom mesh 視界システム起動 (vanilla hijack 路線は dead — reference 参照)
         CreateVision();
+        // 5. 不気味系 overlay (黄色フィルター + 蛍光灯フリッカー)
+        CreateOverlay();
         _visionPaused = false;
         _inBackrooms = true;
         _lastVisionValid = false; // idle skip cache invalidate — 次フレームで強制 rebuild
@@ -1182,6 +1219,7 @@ public static class BackroomsLobby
         _lastVisionValid = false;
         _cullValid = false;
         DestroyVision();
+        DestroyOverlay();
 
         // 1. Backrooms タイル全消去
         int wiped = 0;
@@ -1237,6 +1275,7 @@ public static class BackroomsLobby
         _lastVisionValid = false;
         _cullValid = false;
         DestroyVision();
+        DestroyOverlay();
 
         int wiped = 0;
         foreach (GameObject go in SpawnedTiles)
@@ -1276,6 +1315,8 @@ public static class BackroomsLobby
         _visionMF = null;
         _visionMesh = null;
         _visionMat = null;
+        _overlayGO = null; // 同上 — camera 子なので scene unload で消える
+        _overlaySR = null;
 
         SpawnedTiles.Clear();
         SpawnedTilePositions.Clear();
@@ -1387,6 +1428,104 @@ public static class BackroomsLobby
     // baseline 0.0001 → sqrt=0.01u → walk 中 (0.083u/frame) 毎フレーム rebuild
     // optimized 0.001  → sqrt=0.0316u → walk 中 ~2.5 frame 毎 rebuild (rebuild 30fps)
 
+    // === Backrooms creepy overlay (full-screen yellow filter + fluorescent flicker) ===
+    // 2026-05-23: 蛍光灯下の Backrooms 感を出すために画面全体に薄黄 SR を 1 枚張る。
+    // camera 子なので player 移動に追従。flicker は UpdateVision tick 頭 (idle skip より前) で駆動。
+    // sortingOrder=100 は player/walls/floor 全部の前、AU UI Canvas は別 sorting 系統なので
+    // chat/settings ボタンは透ける
+
+    private static GameObject _overlayGO;
+    private static SpriteRenderer _overlaySR;
+
+    // 黄色フィルター基本値 (alpha 0.14 は「明るい蛍光灯下で空気が黄ばんで見える」程度)
+    private static readonly Color OverlayYellowBase = new(1f, 0.92f, 0.55f, 0.14f);
+    // フリッカー時の覆い (alpha 0.55 で半暗黒化、完全黒だと唐突なので半透明)
+    private static readonly Color OverlayBlackout = new(0f, 0f, 0f, 0.55f);
+    // vignette mesh の色 — 完全黒ではなく僅かに暖色 (≒ #1a1410) で「淀んだ空気」感を出す。
+    // alpha 1.0 で不透明維持 (壁は sortingOrder で前面に来るので隠れない既存仕様)
+    private static readonly Color VignetteWarmDark = new(0.10f, 0.08f, 0.06f, 1f);
+
+    private static float _flickerNextEvalAt;
+    private static float _flickerHoldUntil;
+    private static bool _flickerInBlackout;
+
+    private static void CreateOverlay()
+    {
+        if (_overlayGO != null) return;
+
+        Camera cam = Camera.main;
+        if (cam == null)
+        {
+            Logger.Warn("CreateOverlay: Camera.main null, skip", "BackroomsGen");
+            return;
+        }
+
+        _overlayGO = new GameObject("BackroomsCreepyOverlay");
+        _overlayGO.transform.SetParent(cam.transform, false);
+        _overlayGO.transform.localPosition = new Vector3(0f, 0f, 1f); // camera 前 1u (z+)
+
+        // ortho 半高 × 2 = 全高、× aspect = 全幅。余裕 ×1.3 で letterbox 内を完全カバー
+        float fullH = cam.orthographicSize * 2f * 1.3f;
+        float fullW = fullH * cam.aspect;
+        _overlayGO.transform.localScale = new Vector3(fullW, fullH, 1f);
+
+        _overlaySR = _overlayGO.AddComponent<SpriteRenderer>();
+        _overlaySR.sprite = BaselineSprite;
+        _overlaySR.color = OverlayYellowBase;
+        _overlaySR.sortingLayerName = "Default";
+        _overlaySR.sortingOrder = 100;
+
+        _flickerNextEvalAt = Time.time + UnityEngine.Random.Range(2f, 5f);
+        _flickerHoldUntil = 0f;
+        _flickerInBlackout = false;
+
+        Logger.Info($"Creepy overlay created scale=({fullW:F1}x{fullH:F1}) sortingOrder={_overlaySR.sortingOrder}", "BackroomsGen");
+    }
+
+    private static void DestroyOverlay()
+    {
+        if (_overlayGO == null) return;
+        UnityEngine.Object.Destroy(_overlayGO);
+        _overlayGO = null;
+        _overlaySR = null;
+    }
+
+    // UpdateVision 頭から呼ばれる。idle skip の影響を受けず毎フレ走らせて flicker を維持
+    private static void UpdateOverlay()
+    {
+        if (_overlaySR == null) return;
+
+        float now = Time.time;
+
+        // 1. 停電 hold 中: 暗黒色を出し続け、hold 過ぎたら次回まで間隔セット
+        if (_flickerInBlackout)
+        {
+            if (now >= _flickerHoldUntil)
+            {
+                _flickerInBlackout = false;
+                _flickerNextEvalAt = now + UnityEngine.Random.Range(2.5f, 7f);
+            }
+            else
+            {
+                _overlaySR.color = OverlayBlackout;
+                return;
+            }
+        }
+
+        // 2. 通常時: Perlin で alpha 微揺らぎ (蛍光灯の薄い明滅感)
+        float noise = (Mathf.PerlinNoise(now * 1.7f, 12.3f) - 0.5f) * 0.05f; // ±2.5%
+        Color c = OverlayYellowBase;
+        c.a = Mathf.Clamp01(c.a + noise);
+        _overlaySR.color = c;
+
+        // 3. 次の停電発火判定
+        if (now >= _flickerNextEvalAt)
+        {
+            _flickerInBlackout = true;
+            _flickerHoldUntil = now + UnityEngine.Random.Range(0.03f, 0.12f);
+        }
+    }
+
     private static void CreateVision()
     {
         if (_visionGO != null) return;
@@ -1407,17 +1546,18 @@ public static class BackroomsLobby
         MeshRenderer mr = _visionGO.AddComponent<MeshRenderer>();
 
         // shader 取得: Sprites/Default → stripped 時は既存タイルの material からコピー
-        // 色: 完全黒 alpha 1.0 — 「Backrooms らしさ」のソリッド黒。壁は sortingOrder で dark の上に来るので隠れない
+        // 色: 暖色寄りの極暗茶 (≒ #1a1410)。完全黒だと「闇」だが、僅かに暖色寄せると
+        // 「淀んだ蛍光灯の届かない空気」感になって overlay の黄色フィルターと馴染む (2026-05-23)
         Material src = BorrowTileMaterialOrNull();
         Shader sd = Shader.Find("Sprites/Default");
         if (sd != null)
-            _visionMat = new Material(sd) { color = Color.black };
+            _visionMat = new Material(sd) { color = VignetteWarmDark };
         else if (src != null)
-            _visionMat = new Material(src) { color = Color.black };
+            _visionMat = new Material(src) { color = VignetteWarmDark };
         else
         {
             Logger.Error("Vision: Sprites/Default not found AND no tile material to borrow — mesh will be invisible", "BackroomsGen");
-            _visionMat = new Material(Shader.Find("Hidden/Internal-Colored")) { color = Color.black };
+            _visionMat = new Material(Shader.Find("Hidden/Internal-Colored")) { color = VignetteWarmDark };
         }
 
         mr.material = _visionMat;
@@ -1560,6 +1700,10 @@ public static class BackroomsLobby
     public static void UpdateVision()
     {
         if (!_inBackrooms || _visionGO == null || _visionMesh == null) return;
+
+        // overlay の flicker は idle skip と独立に毎フレ駆動 (player 静止中もチカチカ続く)
+        UpdateOverlay();
+
         if (_visionPaused) return;
         if (PlayerControl.LocalPlayer == null) return;
 
