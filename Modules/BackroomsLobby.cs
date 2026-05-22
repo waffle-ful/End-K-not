@@ -397,6 +397,9 @@ public static class BackroomsLobby
         topSr.color = WallDarkColor;
         topSr.sortingLayerName = "Default";
         topSr.sortingOrder = -3;
+
+        // 下端の contact shadow (壁が床に接する根本の AO 風暗み)
+        AddWallContactShadow(parent, 1f);
     }
 
     // WallH cell の南半分を直下の WallV outline で覆って、V column と上端 dark band を L 字に視覚連結
@@ -518,6 +521,25 @@ public static class BackroomsLobby
     {
         DrawFloorBackground(parent);
         BuildWallVOutline(parent);
+        AddWallContactShadow(parent, 0.5f); // V は柱状なので影は控えめ
+    }
+
+    // 壁の下端から床側に soft な黒帯を伸ばして「物体が床に接触してる」影 (≒ AO) を表現。
+    // 2D で「壁が浮いて見える」根本原因は地面との接地点に光が回り込まない部分の暗みが
+    // 無いこと。StainSprite (radial soft gradient) を縦に押しつぶして使うと両端が自然に
+    // フェードして安価に shadow gradient が作れる
+    private static void AddWallContactShadow(GameObject wallParent, float widthScale)
+    {
+        GameObject shadow = new("WallContactShadow");
+        shadow.transform.SetParent(wallParent.transform, false);
+        // cell 下端 (-0.5) から床側に 0.16u はみ出す → 中心 y = -0.5 - 0.08 = -0.58
+        shadow.transform.localPosition = new Vector3(0f, -0.58f, 0f);
+        shadow.transform.localScale = new Vector3(widthScale, 0.16f, 1f);
+        SpriteRenderer sr = shadow.AddComponent<SpriteRenderer>();
+        sr.sprite = StainSprite;
+        sr.color = new Color(0f, 0f, 0f, 0.55f);
+        sr.sortingLayerName = "Default";
+        sr.sortingOrder = -9; // floor (-10) より前、wall body (-5/-4/-3) より後
     }
 
     // WallV cell の真下が Floor (= V が下向きに宙ぶらりんに終わる) のとき呼ぶ。
@@ -1492,9 +1514,9 @@ public static class BackroomsLobby
     private static readonly Color OverlayYellowBase = new(0.78f, 0.72f, 0.42f, 0.22f);
     // フリッカー時の覆い。「真っ暗」だと唐突なので alpha 0.32 黒で「明るさを下げる」感じに
     private static readonly Color OverlayBlackout = new(0f, 0f, 0f, 0.32f);
-    // vignette mesh の色 — 完全黒ではなく僅かに暖色 (≒ #1a1410) で「淀んだ空気」感を出す。
+    // vignette mesh の色 — ほぼ黒だが僅かに暖色を残す (≒ #0a0805) で「淀んだ空気」感を出す。
     // alpha 1.0 で不透明維持 (壁は sortingOrder で前面に来るので隠れない既存仕様)
-    private static readonly Color VignetteWarmDark = new(0.10f, 0.08f, 0.06f, 1f);
+    private static readonly Color VignetteWarmDark = new(0.04f, 0.03f, 0.02f, 1f);
 
     private static float _flickerNextEvalAt;
     private static float _flickerHoldUntil;
