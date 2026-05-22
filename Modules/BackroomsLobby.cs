@@ -608,7 +608,10 @@ public static class BackroomsLobby
         sr.flipX = isLeft;
         sr.color = new Color(0f, 0f, 0f, 0.45f);
         sr.sortingLayerName = "Default";
-        sr.sortingOrder = -9; // floor (-10) より前、wall body (-5/-4/-3) より後
+        // sortingOrder=-6: vignette mesh (-7) より前、wall body (-5/-4/-3) より後。
+        // 柱の左右 0.075u 隙間は vision raycast の解像度より狭く、cell ごとに
+        // vignette が「開く/閉じる」して AO がポツポツ見えてた問題への対処 (2026-05-23)
+        sr.sortingOrder = -6;
     }
 
     // 壁の下端から床側に soft な黒帯を伸ばして「物体が床に接触してる」影 (≒ AO) を表現。
