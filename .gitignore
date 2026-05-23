@@ -467,3 +467,8 @@ Resources/Sounds/BGM/*.ogg
 Resources/Sounds/BGM/*.mp3
 Resources/Sounds/BGM/*.wav
 Resources/Sounds/BGM/*.flac
+
+# Backrooms ambient sound assets — embedded into the DLL at build, not redistributed.
+Resources/Sounds/Backrooms/*.wav
+Resources/Sounds/Backrooms/*.ogg
+Resources/Sounds/Backrooms/*.mp3

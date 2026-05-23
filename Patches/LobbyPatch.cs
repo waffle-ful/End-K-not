@@ -184,6 +184,19 @@ internal static class LobbyBehaviourStartPatch
     }
 }
 
+// ロビーから抜けた瞬間に Backrooms アンビエントを止める。GO は DontDestroyOnLoad では
+// ないのでシーン unload で死ぬが、Among Us は同一シーン内で LobbyBehaviour を destroy する
+// 経路 (= /bbexit ではなく実際の退室で AudioSource だけ動的に消す) があるため belt-and-suspenders。
+[HarmonyPatch(typeof(LobbyBehaviour), nameof(LobbyBehaviour.OnDestroy))]
+internal static class LobbyBehaviourOnDestroyPatch
+{
+    public static void Postfix()
+    {
+        try { BackroomsAmbient.Stop(); }
+        catch (Exception ex) { Logger.Warn($"BackroomsAmbient.Stop on lobby destroy failed: {ex.Message}", "BackroomsAmbient"); }
+    }
+}
+
 // https://github.com/SuperNewRoles/SuperNewRoles/blob/master/SuperNewRoles/Patches/LobbyBehaviourPatch.cs
 [HarmonyPatch(typeof(LobbyBehaviour), nameof(LobbyBehaviour.Update))]
 internal static class LobbyBehaviourUpdatePatch
