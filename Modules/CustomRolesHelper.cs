@@ -60,6 +60,7 @@ internal static class CustomRolesHelper
         public bool IsExperimental()
         {
             return role is
+                CustomRoles.Doppelganger or
                 CustomRoles.DoubleAgent or
                 CustomRoles.Weatherman;
         }
@@ -219,6 +220,7 @@ internal static class CustomRolesHelper
                 CustomRoles.LazyGuy => CustomRoles.Crewmate,
                 CustomRoles.Twister => UsePets ? CustomRoles.Impostor : CustomRoles.Shapeshifter,
                 CustomRoles.SuperStar => CustomRoles.Crewmate,
+                CustomRoles.Survivor => CustomRoles.Engineer,
                 CustomRoles.Anonymous => CustomRoles.Shapeshifter,
                 CustomRoles.Visionary => CustomRoles.Shapeshifter,
                 CustomRoles.Ninja => CustomRoles.Phantom,
@@ -1096,6 +1098,7 @@ internal static class CustomRolesHelper
                 CustomRoles.Mayor or
                 CustomRoles.Insight or
                 CustomRoles.Decryptor or
+                CustomRoles.Survivor or
                 CustomRoles.Transporter;
         }
 
@@ -1623,6 +1626,7 @@ internal static class CustomRolesHelper
                 CustomRoles.Oxyman => RoleOptionType.Crewmate_Power,
                 CustomRoles.President => RoleOptionType.Crewmate_Power,
                 CustomRoles.Speedrunner => RoleOptionType.Crewmate_Power,
+                CustomRoles.Survivor => RoleOptionType.Crewmate_Power,
                 CustomRoles.Telekinetic => RoleOptionType.Crewmate_Power,
                 CustomRoles.Ankylosaurus => RoleOptionType.Crewmate_Chaos,
                 CustomRoles.Car => RoleOptionType.Crewmate_Chaos,
