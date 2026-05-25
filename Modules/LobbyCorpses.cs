@@ -34,6 +34,10 @@ internal static class LobbyCorpses
     private static float LastJoinTime;
     private static float LastSpawnTime;
 
+    // spawn 中に GameData slot 0 へ被さった空 PlayerName を後から戻すための退避値。
+    // spawn 開始時にセットし、復元処理 + GameStart ガードで参照される。
+    private static string SavedHostName;
+
     public static void Reset()
     {
         BasePos = null;
@@ -43,6 +47,7 @@ internal static class LobbyCorpses
         NextReplayTime = 0f;
         LastJoinTime = 0f;
         LastSpawnTime = 0f;
+        SavedHostName = null;
     }
 
     // 初期 spawn (LobbyBehaviour.Start から)
@@ -116,8 +121,8 @@ internal static class LobbyCorpses
     private static IEnumerator SpawnCoroutine()
     {
         PlayerControl lp = PlayerControl.LocalPlayer;
-        // host の真の名前を退避 (transient PC の Data.Serialize で巻き戻る)
-        string savedName = lp.Data.PlayerName;
+        // host の真の名前を static に退避 (transient PC の Data.Serialize で巻き戻る + GameStart ガードで再利用)
+        SavedHostName = lp.Data.PlayerName;
         byte colorId = (byte)lp.Data.DefaultOutfit.ColorId;
         int spawned = 0;
 
@@ -133,28 +138,60 @@ internal static class LobbyCorpses
             if (i % 4 == 3) yield return null;
         }
 
-        // 全 spawn 完了後にホスト名前を明示復元 (匿名化対策)
-        yield return new WaitForSecondsRealtime(0.5f);
+        // 復元 Action を同じ rate limiter キューに積む → 5 体 spawn の直後に必ず実行される。
+        // 以前は WaitForSecondsRealtime(0.5f) で待っていたが、待ち中に host が Start を押すと
+        // GameData slot 0 の PlayerName が空のまま StartGameHost に入り「プレイヤー」表示 →
+        // vanilla クライアント側で通信エラー (Hacking kick) を誘発するレースがあった。
+        // rate limiter は順序保証付きなので、enqueue 順で必ず spawn の後に restore が走る。
+        int capturedSpawned = spawned;
+        DataFlagRateLimiter.Enqueue(() =>
+        {
+            try
+            {
+                ApplyHostNameRestore(SavedHostName);
+                Logger.Info($"LobbyCorpses: spawned {capturedSpawned} corpses, host name restored to '{SavedHostName}'", "LobbyCorpses");
+            }
+            catch (Exception ex) { Logger.Warn($"Host re-sync failed: {ex.Message}", "LobbyCorpses"); }
+
+            LastSpawnTime = Time.time;
+            SpawnInProgress = false;
+        }, calls: 2);
+    }
+
+    // 復元の実体 — SpawnCoroutine 末尾と EnsureHostNameRestored() の両方から呼ぶ
+    private static void ApplyHostNameRestore(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return;
+        PlayerControl lp = PlayerControl.LocalPlayer;
+        if (lp == null || lp.Data == null) return;
+
+        lp.Data.PlayerName = name;
+        lp.Data.DefaultOutfit.PlayerName = name;
+        lp.Data.IsDead = false;
+        lp.Data.SetDirtyBit(uint.MaxValue);
+        AmongUsClient.Instance.SendAllStreamedObjects();
+        // host 自身の HUD と他クライアントの label を即時更新
+        lp.RpcSetName(name);
+    }
+
+    // ゲーム開始ガード: BeginGame Prefix から呼ばれる。
+    // SpawnCoroutine の中で rate limiter 待ち中に host が Play 押下した場合に備えて、
+    // host 名が SavedHostName と乖離していたら同期的に強制復元する。
+    // 既に rate limiter 経由で復元済みなら no-op。
+    public static void EnsureHostNameRestored()
+    {
+        if (string.IsNullOrEmpty(SavedHostName)) return;
+        if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+        PlayerControl lp = PlayerControl.LocalPlayer;
+        if (lp == null || lp.Data == null) return;
+        if (lp.Data.PlayerName == SavedHostName) return;
 
         try
         {
-            if (lp != null && lp.Data != null)
-            {
-                // PlayerName 自体を保存値で上書き (Serialize で空に巻き戻った状態を復元)
-                lp.Data.PlayerName = savedName;
-                lp.Data.DefaultOutfit.PlayerName = savedName;
-                lp.Data.IsDead = false;
-                lp.Data.SetDirtyBit(uint.MaxValue);
-                AmongUsClient.Instance.SendAllStreamedObjects();
-                // host 自身の HUD と他クライアントの label を即時更新
-                lp.RpcSetName(savedName);
-                Logger.Info($"LobbyCorpses: spawned {spawned} corpses, host name restored to '{savedName}'", "LobbyCorpses");
-            }
+            ApplyHostNameRestore(SavedHostName);
+            Logger.Warn($"LobbyCorpses: host name was corrupted at game start, force-restored to '{SavedHostName}'", "LobbyCorpses");
         }
-        catch (Exception ex) { Logger.Warn($"Host re-sync failed: {ex.Message}", "LobbyCorpses"); }
-
-        LastSpawnTime = Time.time;
-        SpawnInProgress = false;
+        catch (Exception ex) { Logger.Warn($"EnsureHostNameRestored failed: {ex.Message}", "LobbyCorpses"); }
     }
 }
 

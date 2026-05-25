@@ -4,6 +4,7 @@ using System.Linq;
 using AmongUs.Data;
 using AmongUs.GameOptions;
 using EndKnot.Gamemodes;
+using EndKnot.Modules;
 using EndKnot.Patches;
 using EndKnot.Roles;
 using HarmonyLib;
@@ -531,6 +532,11 @@ public static class GameStartRandomMap
 {
     public static bool Prefix(GameStartManager __instance)
     {
+        // LobbyCorpses spawn 中に host が Play を押した場合、GameData slot 0 が空 PlayerName で
+        // 「プレイヤー」表示のまま StartGameHost に入って vanilla クライアントが通信エラー →
+        // Hacking kick されるレースがあるので、ここで強制同期復元する。
+        LobbyCorpses.EnsureHostNameRestored();
+
         PlayerControl[] invalidColor = Main.EnumeratePlayerControls().Where(p => p.Data.DefaultOutfit.ColorId < 0 || Palette.PlayerColors.Length <= p.Data.DefaultOutfit.ColorId).ToArray();
 
         if (invalidColor.Length > 0)
