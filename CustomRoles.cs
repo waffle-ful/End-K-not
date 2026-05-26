@@ -560,6 +560,7 @@ public enum CustomRoles
     ForceFielder,
     Akazukin,
     Skinwalker,
+    Riptide,
     Convict,
     Survivor,
 

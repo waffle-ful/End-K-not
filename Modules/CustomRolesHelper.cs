@@ -911,7 +911,8 @@ internal static class CustomRolesHelper
                 CustomRoles.WaveCannon or
                 CustomRoles.Perplexer or
                 CustomRoles.DummySpawner or
-                CustomRoles.Skinwalker;
+                CustomRoles.Skinwalker or
+                CustomRoles.Riptide;
         }
 
         public bool IsNeutral(bool check = false)
@@ -1361,6 +1362,7 @@ internal static class CustomRolesHelper
                 CustomRoles.Trapster => RoleOptionType.Impostor_Killing,
                 CustomRoles.Wasp => RoleOptionType.Impostor_Killing,
                 CustomRoles.WaveCannon => RoleOptionType.Impostor_Killing,
+                CustomRoles.Riptide => RoleOptionType.Impostor_Killing,
                 CustomRoles.Wiper => RoleOptionType.Impostor_Killing,
                 CustomRoles.Witch => RoleOptionType.Impostor_Killing,
                 CustomRoles.Zombie => RoleOptionType.Impostor_Killing,
