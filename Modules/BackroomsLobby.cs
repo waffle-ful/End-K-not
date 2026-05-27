@@ -128,6 +128,25 @@ public static class BackroomsLobby
     // 部分削除するため。WallAabbs を mutate する全 site で同期維持必須
     private static readonly List<long> WallAabbChunkKeys = [];
 
+    // WallAabbs と完全に index 一致する ghost SpriteRenderer cache (2026-05-27)。
+    // 各壁の子 GO「WallGhost」に着く SR で、視界外 (occlusion) のとき alpha=0.30 で
+    // wall.png を Upper dark mesh の上から透過表示し「壁うっすら見える」絵を作る。
+    // null 許容: ghost 子が無い test pattern や failed spawn 時に index 整合を保つため。
+    // WallAabbs を mutate する全 site で同期維持必須
+    private static readonly List<SpriteRenderer> WallGhostRenderers = [];
+
+    // Entity visibility cache (2026-05-28): DeadBody / 非 local PlayerControl の SR を
+    // 視界内外で enabled toggle するため、毎フレ FindObjectsOfType + GetComponentsInChildren を
+    // 走らせると IL2CPP interop が高い。0.5s ごとに refresh + parallel index で SR array を持つ。
+    // 用途: Upper dark mesh の gradient alpha だと body/player が半透明で透けてしまう問題を
+    // ハードカット (vanilla AU shadow と同じ感覚)。map (壁/床) は Upper dark gradient のままで薄く可視
+    private static readonly List<DeadBody> _entityBodies = [];
+    private static readonly List<SpriteRenderer[]> _entityBodyRenderers = [];
+    private static readonly List<PlayerControl> _entityPlayers = [];
+    private static readonly List<SpriteRenderer[]> _entityPlayerRenderers = [];
+    private static float _entityCacheTime = -1f;
+    private const float EntityCacheRefreshInterval = 0.5f;
+
     // SpawnTile が現在 spawn 中の chunk key を読むスクラッチ。GenerateChunk が
     // try/finally で set/clear、外部から SpawnTile が呼ばれた場合 (test pattern など) は
     // NoChunkKey = long.MinValue で残る → UnloadChunk が誤って消さない
@@ -414,12 +433,65 @@ public static class BackroomsLobby
                 float hy = bc.size.y * 0.5f * Mathf.Abs(ls.y);
                 WallAabbs.Add((c.x, c.y, hx, hy));
                 WallAabbChunkKeys.Add(_currentChunkKey); // parallel cache for streaming unload
+                // ghost SR は BuildWallHComposite / wall_v case 内で生成済 (FindGhostInChildren で取得)
+                WallGhostRenderers.Add(FindGhostInChildren(go));
 
                 // (vanilla shadow hijack 路線は 2026-05-21 dead — caster 追加無し)
             }
         }
 
         return go;
+    }
+
+    // ========================================================================
+    // per-wall ghost SR feature flag (2026-05-27 後段で無効化)
+    //   各壁が CastRayLength で個別に「視界内/遮蔽中」判定 → alpha を 0 or 0.30 で切替する設計だったが、
+    //   隣接壁で alpha がバラついて「並列して並んだ壁が一つの壁に見えない」(cell 境界 V 字状) 症状の主因に。
+    //   user 報告 (2026-05-27): 「並列して並んだ壁は一つの壁ですので一つとして計算しないとダメ」
+    //   ⇒ 当面 false 固定で feature 無効化。Upper dark mesh (+50) + CastRayLength tFar は維持 (occlusion 効果は健在)。
+    //   2026-05-28: フラグ true 再有効化を試したが、ghost が body/corpse の上にも乗って「壁の向こうの死体が見える」
+    //     副作用が発覚 → 即 revert。tFar 設計上、wall chain の先 (= 開けた空間) も vision donut 内になるため、
+    //     body は Upper dark mesh の alpha gradient 中段で部分可視。ghost feature は body 可視に直接寄与しないはずだが、
+    //     注意散漫を生むので根本対処が必要 (tNear 戻し + wall を Upper dark の上で常時描画 等)。
+    // ========================================================================
+    private const bool EnableWallGhost = false;
+
+    // Ghost sprite color
+    //   WallH: 白 (wall.png をそのまま透過表示)
+    //   WallV: WallDarkColor より少し明るい褐色 ≒ #1a1410。Upper dark (#0a0805) との差で silhouette が浮き出る
+    private static readonly Color WallGhostColorH = new(1f, 1f, 1f, 0f);
+    private static readonly Color WallGhostColorV = new(0.1f, 0.08f, 0.06f, 0f);
+
+    // dark zone の壁 ghost に乗せる alpha。チューニング値、要実機確認 (0.20 だと薄すぎ・0.45 だと濃すぎる感)
+    private const float WallGhostAlphaDarkZone = 0.30f;
+
+    // BuildWallHComposite / WallV case が末尾で 1 個だけ生成する子 GO「WallGhost」を逆引きする。
+    // SpawnTile 末尾の WallGhostRenderers.Add で使用。failed spawn / test pattern では null 返却。
+    private static SpriteRenderer FindGhostInChildren(GameObject parent)
+    {
+        if (parent == null) return null;
+        Transform t = parent.transform.Find("WallGhost");
+        return t == null ? null : t.GetComponent<SpriteRenderer>();
+    }
+
+    // 各壁の最上層に乗せる「うっすら見える壁」用 SR を子 GO として生成。sortingOrder=60 で Upper dark (+50) の上、
+    // overlay (100) の下。alpha 0 で default off、UpdateVision の occlusion ループで alpha を toggle。
+    // localScale: WallH は 1×1 (cell 全面)、WallV は body と同じ 0.4×1.0 (隣 cell に被らないため)。
+    //
+    // EnableWallGhost=false 時は早期 return して GO 生成自体しない (WallGhostRenderers は null 詰めで index 同期維持)。
+    private static void AddWallGhost(GameObject parent, bool isH)
+    {
+        if (!EnableWallGhost) return;
+
+        GameObject ghost = new("WallGhost");
+        ghost.transform.SetParent(parent.transform, false);
+        ghost.transform.localPosition = Vector3.zero;
+        ghost.transform.localScale = isH ? new Vector3(1f, 1f, 1f) : new Vector3(0.4f, 1f, 1f);
+        SpriteRenderer sr = ghost.AddComponent<SpriteRenderer>();
+        sr.sprite = isH ? (WallPngSprite ?? WallSpriteH) : BaselineSprite;
+        sr.color = isH ? WallGhostColorH : WallGhostColorV;
+        sr.sortingLayerName = "Default";
+        sr.sortingOrder = 60;
     }
 
     // WallH 合成: face (PNG 優先 / procedural fallback) + 上端 dark band を子で重ね描き
@@ -455,6 +527,9 @@ public static class BackroomsLobby
 
         // 下端の contact shadow (壁が床に接する根本の AO 風暗み)
         AddWallContactShadow(parent, 1f);
+
+        // dark zone 用 ghost overlay (sortingOrder=60、default α=0)
+        AddWallGhost(parent, isH: true);
     }
 
     // WallH cell の南半分を直下の WallV outline で覆って、V column と上端 dark band を L 字に視覚連結
@@ -582,6 +657,9 @@ public static class BackroomsLobby
         BuildWallVOutline(parent);
         AddWallVSideShadow(parent, isLeft: true);  // 左側面 AO
         AddWallVSideShadow(parent, isLeft: false); // 右側面 AO
+
+        // dark zone 用 ghost overlay (sortingOrder=60、default α=0)
+        AddWallGhost(parent, isH: false);
     }
 
     // WallV の左右側面に AO 影。柱が床に接する縦のラインを暗くして「柱が立ってる」感を強化。
@@ -767,6 +845,7 @@ public static class BackroomsLobby
         SpawnedTileChunkKeys.Clear();
         WallAabbs.Clear();
         WallAabbChunkKeys.Clear();
+        WallGhostRenderers.Clear();
         _loadedChunks.Clear();
         _streamValid = false;
         Utils.SendMessage($"Cleared {cleared} tiles.", targetPid);
@@ -939,6 +1018,7 @@ public static class BackroomsLobby
         SpawnedTileChunkKeys.Clear();
         WallAabbs.Clear();
         WallAabbChunkKeys.Clear();
+        WallGhostRenderers.Clear();
         _loadedChunks.Clear();
         _streamValid = false;
 
@@ -1075,6 +1155,7 @@ public static class BackroomsLobby
                 {
                     WallAabbs.RemoveAt(j);
                     WallAabbChunkKeys.RemoveAt(j); // parallel
+                    WallGhostRenderers.RemoveAt(j); // parallel
                 }
             }
 
@@ -1179,6 +1260,7 @@ public static class BackroomsLobby
             if (WallAabbChunkKeys[i] != key) continue;
             WallAabbs.RemoveAt(i);
             WallAabbChunkKeys.RemoveAt(i);
+            WallGhostRenderers.RemoveAt(i); // parallel
         }
 
         if (destroyed > 0)
@@ -1416,6 +1498,7 @@ public static class BackroomsLobby
         DestroyVision();
         DestroyOverlay();
         BackroomsAmbient.Stop();
+        RestoreEntityVisibility();
 
         // 1. Backrooms タイル全消去
         int wiped = 0;
@@ -1431,6 +1514,7 @@ public static class BackroomsLobby
         SpawnedTileChunkKeys.Clear();
         WallAabbs.Clear();
         WallAabbChunkKeys.Clear();
+        WallGhostRenderers.Clear();
         _loadedChunks.Clear();
         _streamValid = false;
 
@@ -1472,6 +1556,7 @@ public static class BackroomsLobby
         _cullValid = false;
         DestroyVision();
         DestroyOverlay();
+        RestoreEntityVisibility();
 
         int wiped = 0;
         foreach (GameObject go in SpawnedTiles)
@@ -1486,6 +1571,7 @@ public static class BackroomsLobby
         SpawnedTileChunkKeys.Clear();
         WallAabbs.Clear();
         WallAabbChunkKeys.Clear();
+        WallGhostRenderers.Clear();
         _loadedChunks.Clear();
         _streamValid = false;
         DisabledColliders.Clear();
@@ -1511,6 +1597,10 @@ public static class BackroomsLobby
         _visionMF = null;
         _visionMesh = null;
         _visionMat = null;
+        _upperVisionGO = null;
+        _upperVisionMF = null;
+        _upperVisionMesh = null;
+        _upperVisionMat = null;
         _overlayGO = null; // 同上 — camera 子なので scene unload で消える
         _overlaySR = null;
 
@@ -1519,8 +1609,15 @@ public static class BackroomsLobby
         SpawnedTileChunkKeys.Clear();
         WallAabbs.Clear();
         WallAabbChunkKeys.Clear();
+        WallGhostRenderers.Clear();
         _loadedChunks.Clear();
         _streamValid = false;
+        // scene unload で entity 参照は dangling になるので cache だけクリア (SR 復元は不要)
+        _entityBodies.Clear();
+        _entityBodyRenderers.Clear();
+        _entityPlayers.Clear();
+        _entityPlayerRenderers.Clear();
+        _entityCacheTime = -1f;
         DisabledColliders.Clear();
         DisabledRenderers.Clear();
 
@@ -1547,6 +1644,14 @@ public static class BackroomsLobby
     // 0.05 は player collider が物理的に到達不可能な距離なので、実プレイ中は一度も clamp しない。
     private const float MinHitDistance = 0.05f;
     private const float DarkRadius = 25f;      // dark mesh 外周 (60→25: 描画 fill 量 17% に縮小)
+    // dark mesh の不透明度 (vertex color α、Lower/Upper 共通)。0〜1 範囲 (byte 0〜255 に変換)。
+    //   ShadowMinAlpha: inner ring (視界境界) の α。0 だと視界境界で完全透明 → 影の輪郭が
+    //     ぼやけて「影自体が薄い」感が出る。上げると視界境界が hard edge 寄りになり影が濃く感じる。
+    //   ShadowMaxAlpha: outer ring (DarkRadius 端) の α。1.0 = 完全不可視、0.95 = 5% map 透過。
+    // bodies/players は SR.enabled で独立に hard-cut されるので、ここを下げても body 可視性には影響しない。
+    // user 要望 (2026-05-28): 影の中でも map が薄く見えるが、影自体は濃く感じるように
+    private const float ShadowMinAlpha = 0.65f;
+    private const float ShadowMaxAlpha = 0.95f;
     private const int MaxRayFanCount = 360;    // base ray fan 上限 (cos/sin table 確保サイズ)
     private const float CornerEps = 0.0005f;   // corner ray の左右オフセット (~0.03°)
     // pre-allocated buffer の上限。base 360 + max 256 corners × 2 = 872 < 1024
@@ -1569,7 +1674,27 @@ public static class BackroomsLobby
     private static Mesh _visionMesh;
     private static Material _visionMat;
 
+    // Upper dark mesh (sortingOrder=+50): player/DeadBody/cosmetic を dark zone で覆う。
+    // 2026-05-27 v3: mesh は Lower (_visionMesh) と **分離** (旧: 共有)。
+    // 真因 — corner ray が donut inner ring に notch を作り、Upper (壁の前面) では notch dark が
+    // 壁の上面を覆って「cell 境界の黒い縦線」「top band 消失」の症状を出す ([[plans/image-1-h-h-glowing-haven]])。
+    // Upper は base ray fan のみで smooth donut を構築し、Lower は従来通り corner ray ありで sharp に保つ。
+    private static GameObject _upperVisionGO;
+    private static MeshFilter _upperVisionMF;
+    private static Mesh _upperVisionMesh;
+    private static Material _upperVisionMat;
+
     private static readonly List<(float cx, float cy, float halfX, float halfY)> _nearbyAabbs = new(64);
+
+    // Per-ray cache: 1 回の RayAabbIntersect 結果を _nearbyAabbs と同 index で保持する。
+    // Phase 1 (first hit 探索) で全壁の (tNear, tFar) を一度だけ計算しキャッシュ、
+    // Phase 2 (chain traversal) はキャッシュを参照するだけで RayAabbIntersect 再呼びを 0 にする。
+    //  - tNearCache[i] = float.NegativeInfinity → この壁とは hit 無し (Phase 2 で skip)
+    //  - tFarCache 値は tNearCache が有効な場合のみ valid
+    // size = 256 にしているのは _nearbyAabbs 上限 (実測 ~50 を上回ることがある最悪ケース) 確保のため。
+    private const int RayCastWallCacheSize = 256;
+    private static readonly float[] _tNearCache = new float[RayCastWallCacheSize];
+    private static readonly float[] _tFarCache = new float[RayCastWallCacheSize];
 
     // ray データ 1 件
     // IL2CPP の Comparer<T>.Default は値型 IComparable<T> で finicky なので、
@@ -1599,6 +1724,22 @@ public static class BackroomsLobby
     private static readonly RayHit[] _rays = new RayHit[MaxRays];
     private static readonly Vector3[] _vertsBuf = new Vector3[2 * MaxRays];
     private static readonly int[] _trisBuf = new int[6 * MaxRays];
+    // Upper mesh 専用 buffer (2026-05-27 v3): base ray fan のみで smooth donut。
+    // corner ray を含まないので _vertsBuf より小さく済むが、サイズ計算を簡単にするため同サイズ確保
+    private static readonly Vector3[] _upperVertsBuf = new Vector3[2 * MaxRays];
+    private static readonly int[] _upperTrisBuf = new int[6 * MaxRays];
+    // Upper mesh の vertex color alpha gradient (2026-05-27 soft shadow 対応):
+    //   inner ring 頂点 α=0 (donut 穴側、透過) → outer ring 頂点 α=255 (DarkRadius 側、不透明)
+    //   donut の厚みを使って自然な fade を作る → 壁が「dark の中に浮く」感を解消
+    //   shader 側は Sprites/Default 系 (vertex color × material color) で動くことを前提。
+    //   borrowed shader が vertex color 非対応なら gradient は ignored になり旧動作 (hard edge) へ fallback
+    private static readonly Color32[] _upperColorsBuf = new Color32[2 * MaxRays];
+
+    // Lower mesh の vertex color alpha gradient (2026-05-28 影透明度調整):
+    //   Upper と同形状の gradient (inner=0 → outer=ShadowMaxAlpha) を Lower にも適用。
+    //   視界境界で床と壁が同じスピードで fade するため、discontinuity (床いきなり覆われる) を防ぐ。
+    //   Lower mesh は corner ray 含む sharp donut なので size は _vertsBuf と一致 (2*MaxRays)
+    private static readonly Color32[] _lowerColorsBuf = new Color32[2 * MaxRays];
     private static int _cosTableBuiltFor; // 0 = 未構築、>0 = この値で build 済
 
     // Idle skip: 直前 rebuild 時の player 位置。動いてなければ rebuild も transform 更新も skip。
@@ -1640,7 +1781,10 @@ public static class BackroomsLobby
     // フリッカー時の覆い。「真っ暗」だと唐突なので alpha 0.32 黒で「明るさを下げる」感じに
     private static readonly Color OverlayBlackout = new(0f, 0f, 0f, 0.32f);
     // vignette mesh の色 — ほぼ黒だが僅かに暖色を残す (≒ #0a0805) で「淀んだ空気」感を出す。
-    // alpha 1.0 で不透明維持 (壁は sortingOrder で前面に来るので隠れない既存仕様)
+    // alpha 1.0 で不透明維持。dark mesh は二段構成 (2026-05-27 改):
+    //   Lower (sortingOrder=-7): floor を dark zone で覆う (壁は -3 以上で素通り)
+    //   Upper (sortingOrder=+50): player/DeadBody/cosmetic を dark zone で覆う (local は donut 中心で常に可視)
+    // 視界外の壁の表現は per-wall ghost sprite (sortingOrder=+60) で別途 alpha 制御
     private static readonly Color VignetteWarmDark = new(0.04f, 0.03f, 0.02f, 1f);
 
     private static float _flickerNextEvalAt;
@@ -1760,12 +1904,45 @@ public static class BackroomsLobby
 
         mr.material = _visionMat;
         mr.sortingLayerName = "Default";
-        // sortingOrder spec: floor=-10 < dark mesh=-7 < walls=-5/-4/-3 < player=0
-        //   → dark は floor を覆う、walls / player は dark の上に描画されて常に可視
-        //   この設定こそが「壁が影で消える」「player 周りに謎の影」の本質的解決
+        // sortingOrder spec (2026-05-27 v3): 二段 dark mesh + per-wall ghost 構成
+        //   floor=-10 < Lower dark=-7 < walls=-5/-4/-3 < player/corpse=0 < Upper dark=+50 < ghost=+60 < overlay=+100
+        //   Lower (-7, corner ray あり / sharp): floor を dark zone で覆う。壁 (-3 以上) は素通り
+        //   Upper (+50, base ray のみ / smooth): player/DeadBody/cosmetic を dark zone で覆う。
+        //     corner ray を入れない理由 — 壁角の notch が Upper では壁の上面を darken し
+        //     「cell 境界の黒線」「top band 消失」を引き起こす ([[plans/image-1-h-h-glowing-haven]])。
+        //   Ghost (+60, per-wall child): Upper dark の上に wall.png α=0.30 で透過、壁テクスチャをうっすら描画
+        //   CastRayLength は tFar 返却で donut 穴が壁の向こうまで広がり、視界内の壁は full color で見える
         mr.sortingOrder = -7;
 
         Logger.Info($"Vision created: shader='{_visionMat.shader?.name}' sortingLayer='{mr.sortingLayerName}' order={mr.sortingOrder} worldPos={_visionGO.transform.position} layer={_visionGO.layer}", "BackroomsGen");
+
+        // Upper dark mesh: mesh (_visionMesh) を Lower と共有。GO・renderer・material は別。
+        // sortingOrder=+50 で player/DeadBody/cosmetic (sortingOrder ~0) を dark zone で覆う。
+        // donut 形状なので donut hole (visible 領域) には triangle が無く local player は常に可視。
+        _upperVisionGO = new GameObject("BackroomsVisionUpper");
+        _upperVisionGO.transform.SetParent(null);
+        _upperVisionGO.transform.position = _visionGO.transform.position;
+
+        _upperVisionMF = _upperVisionGO.AddComponent<MeshFilter>();
+        // Upper mesh は独立 alloc (2026-05-27 v3 改): Lower と別 topology を持たせるため。
+        // Lower は corner ray ありで sharp、Upper は base ray のみで smooth。
+        _upperVisionMesh = new Mesh { name = "BackroomsVisionMeshUpper" };
+        _upperVisionMesh.MarkDynamic();
+        _upperVisionMesh.bounds = new Bounds(Vector3.zero, new Vector3(2f * DarkRadius, 2f * DarkRadius, 1f));
+        _upperVisionMF.sharedMesh = _upperVisionMesh;
+
+        MeshRenderer umr = _upperVisionGO.AddComponent<MeshRenderer>();
+        if (sd != null)
+            _upperVisionMat = new Material(sd) { color = VignetteWarmDark };
+        else if (src != null)
+            _upperVisionMat = new Material(src) { color = VignetteWarmDark };
+        else
+            _upperVisionMat = new Material(Shader.Find("Hidden/Internal-Colored")) { color = VignetteWarmDark };
+        umr.material = _upperVisionMat;
+        umr.sortingLayerName = "Default";
+        umr.sortingOrder = 50;
+
+        Logger.Info($"Upper vision created: sortingOrder={umr.sortingOrder}", "BackroomsGen");
     }
 
     // 既に画面に出ている (= 描画経路 OK な) SpriteRenderer から shared material を借りる fallback
@@ -1782,6 +1959,15 @@ public static class BackroomsLobby
 
     private static void DestroyVision()
     {
+        if (_upperVisionGO != null)
+        {
+            UnityEngine.Object.Destroy(_upperVisionGO);
+            _upperVisionGO = null;
+            _upperVisionMF = null;
+            _upperVisionMesh = null;
+            _upperVisionMat = null;
+        }
+
         if (_visionGO == null) return;
         UnityEngine.Object.Destroy(_visionGO);
         _visionGO = null;
@@ -1818,6 +2004,7 @@ public static class BackroomsLobby
     {
         _visionPaused = !_visionPaused;
         if (_visionGO != null) _visionGO.SetActive(!_visionPaused);
+        if (_upperVisionGO != null) _upperVisionGO.SetActive(!_visionPaused);
         // pause = 診断モード = 全タイル可視化したい。reactivate して cull 中断
         if (_visionPaused) ForceActivateAllTiles();
         _cullValid = false; // 復帰時に再 cull
@@ -1925,6 +2112,7 @@ public static class BackroomsLobby
         EnsureCosTable();
 
         _visionGO.transform.position = new Vector3(player.x, player.y, 0f);
+        if (_upperVisionGO != null) _upperVisionGO.transform.position = _visionGO.transform.position;
 
         // 1. VisionRadius 圏内の wall AABB を pre-filter
         _nearbyAabbs.Clear();
@@ -1942,6 +2130,7 @@ public static class BackroomsLobby
         const float twoPi = Mathf.PI * 2f;
 
         // 2. Base uniform ray fan (gap-free coverage の保険)
+        //    _rays[0..rfc) に angle 昇順で詰める (i/rfc * 2π を直接代入 → ソート不要)
         int rfc = RayFanCount;
         for (int i = 0; i < rfc; i++)
         {
@@ -1955,8 +2144,18 @@ public static class BackroomsLobby
             count++;
         }
 
-        // 3. Corner rays — 各 visible AABB corner に ±ε rays で sharp shadow boundary を作る
+        // 2b. Upper mesh は **ここで** base ray のみで build する (2026-05-27 v3)。
+        //     corner ray を append する前に build することで、Upper donut inner ring は base ray のみの
+        //     smooth polygon になり、壁角での notch (dip) が発生しない。
+        //     → 視界内の壁上面が Upper dark に覆われない (= 黒い縦線 / top band 消失の症状解消)。
+        //     許容 trade-off: 壁角の外側に thin 三角形 leak (corner leak) が出るが、Backrooms
+        //     ロビーで cosmetic 上問題なし (壁が連続するため leak の角度範囲が極小)
+        if (_upperVisionMesh != null)
+            BuildDonutMesh(rfc, _upperVertsBuf, _upperTrisBuf, _upperColorsBuf, _upperVisionMesh);
+
+        // 3. Corner rays — 各 visible AABB corner に ±ε rays で sharp shadow boundary を作る (Lower mesh 専用)
         //    これがないと角の向こうに広い扇形 (corner leak) が visible 領域として残る
+        //    Upper mesh には影響しない (2b で先に build 済)
         for (int wi = 0; wi < _nearbyAabbs.Count && count + 8 < MaxRays; wi++)
         {
             var w = _nearbyAabbs[wi];
@@ -1989,53 +2188,267 @@ public static class BackroomsLobby
         // 4. Sort by angle — 明示 IComparer 渡し (IL2CPP default Comparer 不安定回避)
         Array.Sort(_rays, 0, count, _rayHitComparer);
 
-        // 5. Build vertices: inner ring [0..count) は hit dist、outer ring [count..2*count) は DarkRadius
-        for (int i = 0; i < count; i++)
+        // 5-8. Lower mesh build (corner ray 含む sharp donut)。
+        //   vertex color gradient で Upper と同じ inner=0/outer=ShadowMaxAlpha の fade を作り、
+        //   視界境界で床と壁が同期して fade するようにする (床が「いきなり覆われる」不連続を解消)
+        BuildDonutMesh(count, _vertsBuf, _trisBuf, _lowerColorsBuf, _visionMesh);
+
+        // 9. Per-entity visibility hard-cut (2026-05-28)
+        //    Upper dark mesh は gradient alpha (inner 0 → outer 1) なので、視界外でも body/player が
+        //    透けて見える。user spec「player/死体は完全に不可視、map は薄く見える」に合わせ、
+        //    DeadBody / 非 local PlayerControl の SR を視界判定で enabled toggle。
+        //    map (壁/床) は触らず Upper dark gradient のまま「薄く見える」を維持。
+        UpdateEntityVisibility(player);
+
+        // 10. Per-wall ghost α 更新 (2026-05-27、後段で disable)
+        //    EnableWallGhost=false の間は完全に skip。隣接壁で alpha がバラつく「各ブロック個別計算」問題を回避。
+        //    Upper dark mesh (+50) が dark zone を一律に覆うため、壁は dark zone で「均一に消える」絵になる。
+        if (!EnableWallGhost) return;
+
+        //    DarkRadius 圏内の全壁を回し、player→wall 中心方向に CastRayLength で 1 ray テスト。
+        //    hit dist ≥ wall 中心距離 → 視界内 → ghost α=0 (Upper dark の上に何も乗せない、wall body が donut hole で full color 表示)
+        //    hit dist <  wall 中心距離 → 遮蔽中 → ghost α=ShadeAlphaDarkZone (Upper dark の上に wall.png 透過、うっすら silhouette)
+        //
+        //    _nearbyAabbs は 8u 圏内だけなので使えない。WallAabbs 全件に対し DarkRadius (25u) で別 filter。
+        //    最大 ~50-100 wall、idle skip と pause で 0 cost。
+        float darkR2 = DarkRadius * DarkRadius;
+        int wallCount = WallAabbs.Count;
+        // WallGhostRenderers と WallAabbs は index 完全一致 (Add/RemoveAt を全 site で同期)
+        for (int wi = 0; wi < wallCount; wi++)
+        {
+            SpriteRenderer ghost = wi < WallGhostRenderers.Count ? WallGhostRenderers[wi] : null;
+            if (ghost == null) continue;
+
+            var w = WallAabbs[wi];
+            float dx = w.cx - player.x;
+            float dy = w.cy - player.y;
+            float d2 = dx * dx + dy * dy;
+
+            // DarkRadius 圏外: dark mesh の範囲外なので alpha 0 (camera 視野からも遠い)
+            if (d2 > darkR2)
+            {
+                if (ghost.color.a > 0.01f) ghost.color = SetAlpha(ghost.color, 0f);
+                continue;
+            }
+
+            // wall 中心までの距離・方向 (degenerate 防止)
+            float dist = Mathf.Sqrt(d2);
+            if (dist < 1e-4f) { ghost.color = SetAlpha(ghost.color, 0f); continue; }
+            float cos = dx / dist;
+            float sin = dy / dist;
+
+            // 既存 CastRayLength を再利用。ただし _nearbyAabbs に依存するため、ここでは
+            // wall を「視界内 (= 自分自身が最も手前)」と「遮蔽中 (= 自分より手前に別の壁がある)」で分ける必要がある。
+            // CastRayLength は AABB の tFar を返すので、自分自身も hit にカウントされ tFar≒wall back face になる。
+            // → wall 中心距離 ≤ hit dist なら自分が最も手前 (= 視界内)
+            float hit = CastRayLength(player, cos, sin);
+            bool visible = dist <= hit + 0.05f; // epsilon でフェンス cell の浮動小数誤差吸収
+
+            float targetAlpha = visible ? 0f : WallGhostAlphaDarkZone;
+            // 微小差なら触らず interop call 節約
+            if (Mathf.Abs(ghost.color.a - targetAlpha) > 0.01f)
+                ghost.color = SetAlpha(ghost.color, targetAlpha);
+        }
+    }
+
+    // SpriteRenderer.color の alpha だけ更新する helper (struct copy + mutate + assign)
+    private static Color SetAlpha(Color c, float a) { c.a = a; return c; }
+
+    // DeadBody / 非 local PlayerControl の SR を視界判定で enabled toggle。
+    // 視界内 = enabled true (vanilla 表示)、視界外 = enabled false (完全不可視)。
+    // map (壁/床) は触らず、Upper dark gradient のまま薄く見える挙動を維持
+    private static void UpdateEntityVisibility(Vector2 player)
+    {
+        if (_entityCacheTime < 0f || Time.time - _entityCacheTime > EntityCacheRefreshInterval)
+        {
+            RefreshEntityCache();
+            _entityCacheTime = Time.time;
+        }
+
+        float darkR2 = DarkRadius * DarkRadius;
+
+        // DeadBodies (LobbyCorpses 含む)
+        for (int i = 0; i < _entityBodies.Count; i++)
+        {
+            DeadBody body = _entityBodies[i];
+            if (body == null) continue;
+            Vector3 bp = body.transform.position;
+            bool visible = ComputeEntityVisible(player, bp.x, bp.y, darkR2);
+            SetRenderersEnabled(_entityBodyRenderers[i], visible);
+        }
+
+        // 非 local PlayerControl (host 自身は常時可視 = donut 中心)
+        PlayerControl lp = PlayerControl.LocalPlayer;
+        for (int i = 0; i < _entityPlayers.Count; i++)
+        {
+            PlayerControl pc = _entityPlayers[i];
+            if (pc == null || pc == lp) continue;
+            Vector3 pp = pc.transform.position;
+            bool visible = ComputeEntityVisible(player, pp.x, pp.y, darkR2);
+            SetRenderersEnabled(_entityPlayerRenderers[i], visible);
+        }
+    }
+
+    // entity 1 個に対して「player から見て donut hole の中か」を判定。
+    // CastRayLength を再利用 — 角度 (cos, sin) を計算して 1 ray 撃つだけ
+    private static bool ComputeEntityVisible(Vector2 player, float entX, float entY, float darkR2)
+    {
+        float dx = entX - player.x;
+        float dy = entY - player.y;
+        float d2 = dx * dx + dy * dy;
+        if (d2 > darkR2) return false;          // DarkRadius 圏外は完全不可視
+        if (d2 < 1e-4f) return true;            // player と重なる位置 (host 自身など) は可視
+        float dist = Mathf.Sqrt(d2);
+        float cos = dx / dist;
+        float sin = dy / dist;
+        float hit = CastRayLength(player, cos, sin);
+        return dist <= hit + 0.05f;             // donut inner ring の内側 = 視界内
+    }
+
+    // 0.5s ごとに呼ばれる FindObjectsOfType ベースの cache 更新。
+    // body/player の出入りは lobby ではまれなので 0.5s 粒度で十分。SR array も同時に cache
+    private static void RefreshEntityCache()
+    {
+        _entityBodies.Clear();
+        _entityBodyRenderers.Clear();
+        DeadBody[] bodies = Object.FindObjectsOfType<DeadBody>();
+        for (int i = 0; i < bodies.Length; i++)
+        {
+            if (bodies[i] == null) continue;
+            _entityBodies.Add(bodies[i]);
+            _entityBodyRenderers.Add(bodies[i].GetComponentsInChildren<SpriteRenderer>());
+        }
+
+        _entityPlayers.Clear();
+        _entityPlayerRenderers.Clear();
+        foreach (PlayerControl pc in PlayerControl.AllPlayerControls)
+        {
+            if (pc == null) continue;
+            _entityPlayers.Add(pc);
+            _entityPlayerRenderers.Add(pc.GetComponentsInChildren<SpriteRenderer>());
+        }
+    }
+
+    // SR array の enabled を一括 toggle。null チェック + 不変なら interop skip
+    private static void SetRenderersEnabled(SpriteRenderer[] srs, bool enabled)
+    {
+        if (srs == null) return;
+        for (int i = 0; i < srs.Length; i++)
+        {
+            if (srs[i] == null) continue;
+            if (srs[i].enabled != enabled) srs[i].enabled = enabled;
+        }
+    }
+
+    // Backrooms 退出時 cleanup — UpdateEntityVisibility で false にした SR を全部 true に戻し、
+    // cache を解放。これを呼ばないと vanilla ロビーに戻った後も body/player が消えたまま
+    private static void RestoreEntityVisibility()
+    {
+        for (int i = 0; i < _entityBodyRenderers.Count; i++)
+            SetRenderersEnabled(_entityBodyRenderers[i], true);
+        for (int i = 0; i < _entityPlayerRenderers.Count; i++)
+            SetRenderersEnabled(_entityPlayerRenderers[i], true);
+        _entityBodies.Clear();
+        _entityBodyRenderers.Clear();
+        _entityPlayers.Clear();
+        _entityPlayerRenderers.Clear();
+        _entityCacheTime = -1f;
+    }
+
+    // _rays[0..n) を inner ring、DarkRadius を outer ring とする donut mesh を build して mesh に upload (2026-05-27 v3)。
+    //   verts: 上限 2*MaxRays、未使用 slot は前 frame の stale data だが triangle が指さないので無害
+    //   tris : 6*MaxRays、未使用 slot は全 index=0 (degenerate) で埋めて Mesh.Clear 回避
+    //   colors: null なら vertex color を触らない (Lower mesh は solid 暗色)。
+    //           non-null なら inner ring α=0 (透過)、outer ring α=255 (不透明) で gradient (Upper mesh の soft edge)。
+    //   _rays は angle 昇順前提 (base ray のみなら自然順、corner ray 含むなら呼び出し前に Array.Sort)
+    private static void BuildDonutMesh(int n, Vector3[] verts, int[] tris, Color32[] colors, Mesh mesh)
+    {
+        if (n < 2 || mesh == null) return;
+        bool hasColors = colors != null;
+        Color32 innerCol = new(255, 255, 255, (byte)(ShadowMinAlpha * 255f));
+        Color32 outerCol = new(255, 255, 255, (byte)(ShadowMaxAlpha * 255f));
+
+        // Build vertices: inner ring [0..n) は hit dist、outer ring [n..2*n) は DarkRadius
+        for (int i = 0; i < n; i++)
         {
             float c = _rays[i].Cos;
             float s = _rays[i].Sin;
             float d = _rays[i].Dist;
-            _vertsBuf[i] = new Vector3(c * d, s * d, 0f);
-            _vertsBuf[i + count] = new Vector3(c * DarkRadius, s * DarkRadius, 0f);
+            verts[i] = new Vector3(c * d, s * d, 0f);
+            verts[i + n] = new Vector3(c * DarkRadius, s * DarkRadius, 0f);
+            if (hasColors)
+            {
+                colors[i] = innerCol;     // inner ring 透過
+                colors[i + n] = outerCol; // outer ring 不透明
+            }
         }
 
-        // 6. Build triangles (donut topology — slice i は inner[i,next] / outer[i,next] の 2 tri)
-        for (int i = 0; i < count; i++)
+        // Build triangles (donut topology — slice i は inner[i,next] / outer[i,next] の 2 tri)
+        for (int i = 0; i < n; i++)
         {
-            int next = (i + 1) % count;
+            int next = (i + 1) % n;
             int t = i * 6;
-            _trisBuf[t + 0] = i;
-            _trisBuf[t + 1] = i + count;
-            _trisBuf[t + 2] = next + count;
-            _trisBuf[t + 3] = i;
-            _trisBuf[t + 4] = next + count;
-            _trisBuf[t + 5] = next;
+            tris[t + 0] = i;
+            tris[t + 1] = i + n;
+            tris[t + 2] = next + n;
+            tris[t + 3] = i;
+            tris[t + 4] = next + n;
+            tris[t + 5] = next;
         }
 
-        // 7. 未使用 triangle slot は全 index=0 で埋めて degenerate triangle 化
-        //    (Mesh.Clear() を呼ばずに variable count を扱う trick)
-        int validTris = count * 6;
-        for (int i = validTris; i < _trisBuf.Length; i++)
-            _trisBuf[i] = 0;
+        // 未使用 triangle slot を degenerate 化
+        int validTris = n * 6;
+        for (int i = validTris; i < tris.Length; i++)
+            tris[i] = 0;
 
-        // 8. Upload
-        //    vertex buffer 全体 (2*MaxRays) を毎フレーム送るが、未使用 slot は triangle が指さないので無害。
-        //    partial upload (count*2 だけ送る) は 2026-05-22 に試したが画面崩れで没。
-        //    static bounds は CreateVision で 1 度設定済 → calculateBounds=false
-        _visionMesh.SetVertices(_vertsBuf);
-        _visionMesh.SetTriangles(_trisBuf, 0, _trisBuf.Length, 0, calculateBounds: false);
+        // Upload
+        //   partial upload (n*2 だけ送る) は 2026-05-22 に試したが画面崩れで没。full vert upload に固定。
+        //   static bounds は CreateVision で 1 度設定済 → calculateBounds=false
+        mesh.SetVertices(verts);
+        mesh.SetTriangles(tris, 0, tris.Length, 0, calculateBounds: false);
+        if (hasColors) mesh.SetColors(colors);
     }
 
-    // 与えられた単位方向 (cos, sin) に origin から ray を撃ち、最近接の AABB ヒット距離を返す
-    // - 通常 (origin が AABB 外): tNear = 入射距離を hit とする
-    // - origin が AABB 内 (player が壁の中に詰まった場合): tFar = 出口距離を hit とする
+    // 与えられた単位方向 (cos, sin) に origin から ray を撃ち、最初に当たった「連続壁チェーン」の
+    // 向こう側距離を返す。
+    //
+    // ## 仕様遷移 (重要)
+    //
+    // 旧 v1: tNear (最近接壁の手前面) を返す
+    // v2 (2026-05-27 前段): tFar (最近接壁の向こう側) を返す
+    //   - dark mesh が壁より前面 (sortingOrder=-1) に移ったため、tNear だと壁本体が
+    //     dark mesh に塗りつぶされて見えなくなる
+    // v3 (2026-05-27 後段): **連続する隣接壁を traverse して、チェーン全体の tFar を返す**
+    //   - v2 の問題: 連続する WallH 行で、各 cell の AABB が独立に扱われ、隣 cell との
+    //     共有 edge (e.g., X=0.5) で tFar が打ち切られる。隣の角度で別 cell が new first hit
+    //     になり、tFar が cell ごとに段差状に振動 → 視界内に V 字状の donut inner ring 段差
+    //     ([[plans/image-1-h-h-glowing-haven]] symptom A の根治不全)
+    //   - 対応: 最初の hit を確定したあと、その tFar 出口点が他の壁の入射点 (tNear)
+    //     と一致 (差 < eps) する壁を逐次取り込んで bestExitDist を更新。連続する限り chain
+    //     を伸ばす。これで「並列して並んだ壁は一つの壁」(2026-05-27 ご主人様要望) として
+    //     扱われ、cell 境界の V 字段差が消える
+    //
+    // ## ケース
+    // - 通常 (origin が AABB 外): 最小 tNear の AABB を選び、その tFar から chain を伸ばす
+    // - origin が AABB 内 (player が壁の中に詰まった): その AABB の tFar から chain を伸ばす
     //   → vision が壁の出口表面でクリップされて「壁を貫通して見える」バグを防止
-    //   (2026-05-21: 旧 continue skip ロジックは player が wall_h 内に詰まった時に上方向の
-    //    視界が次の行まで突き抜ける症状の元凶 — VisionDiag で確認済)
     private static float CastRayLength(Vector2 origin, float cos, float sin)
     {
-        float tMin = VisionRadius;
-        for (int i = 0; i < _nearbyAabbs.Count; i++)
+        int count = _nearbyAabbs.Count;
+        if (count > RayCastWallCacheSize) count = RayCastWallCacheSize;
+
+        bool useCosInv = Mathf.Abs(cos) >= 1e-6f;
+        bool useSinInv = Mathf.Abs(sin) >= 1e-6f;
+        float invCos = useCosInv ? 1f / cos : 0f;
+        float invSin = useSinInv ? 1f / sin : 0f;
+
+        // --- Phase 1: 全壁の (tNear, tFar) を 1 度だけ計算してキャッシュ + first hit 確定 ---
+        // chain traversal で同じ wall を 16 回 RayAabbIntersect し直すのを避けるため、
+        // Phase 2 はキャッシュ参照だけで済む形にする (IL2CPP 関数呼び出しオーバーヘッド削減)
+        float bestHitDist = VisionRadius;
+        float bestExitDist = VisionRadius;
+        int bestIdx = -1;
+        for (int i = 0; i < count; i++)
         {
             var w = _nearbyAabbs[i];
             float minX = w.cx - w.halfX;
@@ -2043,58 +2456,87 @@ public static class BackroomsLobby
             float minY = w.cy - w.halfY;
             float maxY = w.cy + w.halfY;
 
-            // Slab method
-            // 軸平行 ray (cos=0 or sin=0) の罠: 単に t±inf を返すと「origin が slab 外」のケースで
-            // wall を誤検知して 4 cardinal 方向に false-hit による黒スパイクが出る。
-            // sin=0 なら ray は y=origin.y に貼り付くので、AABB y 範囲外なら絶対に当たらない。
             float tx1, tx2;
-            if (Mathf.Abs(cos) < 1e-6f)
+            if (!useCosInv)
             {
-                if (origin.x < minX || origin.x > maxX) continue;
+                if (origin.x < minX || origin.x > maxX) { _tNearCache[i] = float.NegativeInfinity; continue; }
                 tx1 = float.NegativeInfinity;
                 tx2 = float.PositiveInfinity;
             }
             else
             {
-                tx1 = (minX - origin.x) / cos;
-                tx2 = (maxX - origin.x) / cos;
+                tx1 = (minX - origin.x) * invCos;
+                tx2 = (maxX - origin.x) * invCos;
                 if (tx1 > tx2) { (tx1, tx2) = (tx2, tx1); }
             }
 
             float ty1, ty2;
-            if (Mathf.Abs(sin) < 1e-6f)
+            if (!useSinInv)
             {
-                if (origin.y < minY || origin.y > maxY) continue;
+                if (origin.y < minY || origin.y > maxY) { _tNearCache[i] = float.NegativeInfinity; continue; }
                 ty1 = float.NegativeInfinity;
                 ty2 = float.PositiveInfinity;
             }
             else
             {
-                ty1 = (minY - origin.y) / sin;
-                ty2 = (maxY - origin.y) / sin;
+                ty1 = (minY - origin.y) * invSin;
+                ty2 = (maxY - origin.y) * invSin;
                 if (ty1 > ty2) { (ty1, ty2) = (ty2, ty1); }
             }
 
-            float tNear = Mathf.Max(tx1, ty1);
-            float tFar = Mathf.Min(tx2, ty2);
+            float tN = Mathf.Max(tx1, ty1);
+            float tF = Mathf.Min(tx2, ty2);
 
-            if (tFar < 0f || tNear > tFar) continue;
+            if (tF < 0f || tN > tF) { _tNearCache[i] = float.NegativeInfinity; continue; }
 
-            if (tNear > 0f)
+            _tNearCache[i] = tN;
+            _tFarCache[i] = tF;
+
+            float thisHit;
+            if (tN > 0f)        thisHit = tN;
+            else if (tF > 0f)   thisHit = 0f;
+            else                continue;
+
+            if (thisHit < bestHitDist)
             {
-                // 通常ケース: origin が AABB 外、ray が tNear で入射 → tNear を hit に
-                if (tNear < tMin) tMin = tNear;
-            }
-            else if (tFar > 0f)
-            {
-                // origin が AABB 内 (壁に詰まった時): tFar = 出口距離を hit に
-                // → 壁の出口表面で vision がクリップされ、壁を貫通して見えなくなる
-                if (tFar < tMin) tMin = tFar;
+                bestHitDist = thisHit;
+                bestExitDist = tF;
+                bestIdx = i;
             }
         }
-        // MinHitDistance は退化頂点 (全方位 t≈0 で polygon が点に collapse) の防止だけ。
-        // 実ヒット距離はそのまま返す — 壁張り付き時に inner ring が壁の向こうへ食い込まないように。
-        return tMin < MinHitDistance ? MinHitDistance : tMin;
+
+        if (bestIdx < 0) return VisionRadius < MinHitDistance ? MinHitDistance : VisionRadius;
+
+        // --- Phase 2: 隣接壁 chain を traverse して bestExitDist を伸ばす (キャッシュ参照のみ) ---
+        // ある壁の tFar 出口点 = 別壁の tNear 入射点 (差 ≤ eps) なら、その壁を chain に取り込む。
+        // 連続 WallH 行 / WallV 列 / L 字接合などで「壁の塊」として動く。
+        // chain depth 上限 8: ray 1 本で 8 cell 以上連続する壁は user 報告環境ではほぼ存在せず、
+        // 安全装置として十分。worst-case compute を半減 (旧 16 → 8)。
+        const float chainEps = 0.02f;
+        int safety = 8;
+        bool extended;
+        do
+        {
+            extended = false;
+            float exitNow = bestExitDist;
+            float exitMinusEps = exitNow - chainEps;
+            float exitPlusEps = exitNow + chainEps;
+            for (int i = 0; i < count; i++)
+            {
+                if (i == bestIdx) continue;
+                float tN = _tNearCache[i];
+                if (tN < exitMinusEps || tN > exitPlusEps) continue;     // 隣接条件外
+                float tF = _tFarCache[i];
+                if (tF <= exitNow + 1e-4f) continue;                     // chain 前進無し
+                bestExitDist = tF;
+                bestIdx = i;
+                extended = true;
+                break;
+            }
+        }
+        while (extended && --safety > 0);
+
+        return bestExitDist < MinHitDistance ? MinHitDistance : bestExitDist;
     }
 
     // 診断: AU vanilla の vision system (ShadowCollab / ShadowCamera / ShadowQuad) の runtime state を log
