@@ -19,54 +19,59 @@ namespace EndKnot
     // ============================================================
     internal sealed class RiptideWaveCNO : CustomNetObject
     {
-        private const int FontSizeAbsolute = 300;
+        // 較正 (2026-05-27 ご主人様 /ripsize 実測):
+        //   size=20 absolute × 8 col W でマップ大半を覆う → 1 col/row ≈ 3〜4 unit
+        //   「マップ全体を覆う巨大波」コンセプトを満たすため 8×8 W グリッドを維持
+        //   視覚中心は transform.position から +Y 方向に半分シフト (TMP bottom-center anchor 仕様)
+        //   ヒット判定はこのオフセットを補正するため Riptide.cs:VisualVerticalOffset で対応
+        private const int FontSizeAbsolute = 20;
 
-        // 方向別スプライト — 8 行 × 8 文字で約 200 byte/スプライト
-        // 前面は濃い青、後面は薄い青でグラデーション表現
-        // </alpha> 閉じタグ禁止 (TMP タグ罠 #10)。半透明は <color=#xxxxxx80> で
+        // 方向別スプライト — 全て 8 col × 8 row、グラデーションで進行方向を表現
+        // 前縁 (進行方向側) = 濃い青 #0095ff、後縁 = 薄い青 #b8e1ff
+        // </alpha> 閉じタグ禁止 (TMP タグ罠 #10)
         private static readonly string[] Sprites =
         {
-            // Index 0 : 左→右 (wave front = 右端)
+            // Index 0 : 左→右 (wave front = 右端 col、後尾 = 左端)
             $"<size={FontSizeAbsolute}><line-height=97%>" +
-            $"<mark=#b8e1ff>WWWWWW</mark><mark=#0095ff>WW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWW</mark><mark=#0095ff>WW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWW</mark><mark=#0095ff>WW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWW</mark><mark=#0095ff>WW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWW</mark><mark=#0095ff>WW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWW</mark><mark=#0095ff>WW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWW</mark><mark=#0095ff>WW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWW</mark><mark=#0095ff>WW</mark></size>",
+            $"<mark=#b8e1ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#0095ff>WW</mark>\n" +
+            $"<mark=#b8e1ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#0095ff>WW</mark>\n" +
+            $"<mark=#b8e1ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#0095ff>WW</mark>\n" +
+            $"<mark=#b8e1ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#0095ff>WW</mark>\n" +
+            $"<mark=#b8e1ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#0095ff>WW</mark>\n" +
+            $"<mark=#b8e1ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#0095ff>WW</mark>\n" +
+            $"<mark=#b8e1ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#0095ff>WW</mark>\n" +
+            $"<mark=#b8e1ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#0095ff>WW</mark></size>",
 
-            // Index 1 : 右→左 (wave front = 左端)
+            // Index 1 : 右→左 (wave front = 左端 col、後尾 = 右端)
             $"<size={FontSizeAbsolute}><line-height=97%>" +
-            $"<mark=#0095ff>WW</mark><mark=#b8e1ff>WWWWWW</mark>\n" +
-            $"<mark=#0095ff>WW</mark><mark=#b8e1ff>WWWWWW</mark>\n" +
-            $"<mark=#0095ff>WW</mark><mark=#b8e1ff>WWWWWW</mark>\n" +
-            $"<mark=#0095ff>WW</mark><mark=#b8e1ff>WWWWWW</mark>\n" +
-            $"<mark=#0095ff>WW</mark><mark=#b8e1ff>WWWWWW</mark>\n" +
-            $"<mark=#0095ff>WW</mark><mark=#b8e1ff>WWWWWW</mark>\n" +
-            $"<mark=#0095ff>WW</mark><mark=#b8e1ff>WWWWWW</mark>\n" +
-            $"<mark=#0095ff>WW</mark><mark=#b8e1ff>WWWWWW</mark></size>",
+            $"<mark=#0095ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#b8e1ff>WW</mark>\n" +
+            $"<mark=#0095ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#b8e1ff>WW</mark>\n" +
+            $"<mark=#0095ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#b8e1ff>WW</mark>\n" +
+            $"<mark=#0095ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#b8e1ff>WW</mark>\n" +
+            $"<mark=#0095ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#b8e1ff>WW</mark>\n" +
+            $"<mark=#0095ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#b8e1ff>WW</mark>\n" +
+            $"<mark=#0095ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#b8e1ff>WW</mark>\n" +
+            $"<mark=#0095ff>WW</mark><mark=#5db8ff>WWWW</mark><mark=#b8e1ff>WW</mark></size>",
 
-            // Index 2 : 上→下 (wave front = 下端)
+            // Index 2 : 上→下 (wave front = 下端 row、後尾 = 上端)
             $"<size={FontSizeAbsolute}><line-height=97%>" +
             $"<mark=#b8e1ff>WWWWWWWW</mark>\n" +
             $"<mark=#b8e1ff>WWWWWWWW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWWWW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWWWW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWWWW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWWWW</mark>\n" +
+            $"<mark=#5db8ff>WWWWWWWW</mark>\n" +
+            $"<mark=#5db8ff>WWWWWWWW</mark>\n" +
+            $"<mark=#5db8ff>WWWWWWWW</mark>\n" +
+            $"<mark=#5db8ff>WWWWWWWW</mark>\n" +
             $"<mark=#0095ff>WWWWWWWW</mark>\n" +
-            $"<mark=#0073ff>WWWWWWWW</mark></size>",
+            $"<mark=#0095ff>WWWWWWWW</mark></size>",
 
-            // Index 3 : 下→上 (wave front = 上端)
+            // Index 3 : 下→上 (wave front = 上端 row、後尾 = 下端)
             $"<size={FontSizeAbsolute}><line-height=97%>" +
-            $"<mark=#0073ff>WWWWWWWW</mark>\n" +
             $"<mark=#0095ff>WWWWWWWW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWWWW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWWWW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWWWW</mark>\n" +
-            $"<mark=#b8e1ff>WWWWWWWW</mark>\n" +
+            $"<mark=#0095ff>WWWWWWWW</mark>\n" +
+            $"<mark=#5db8ff>WWWWWWWW</mark>\n" +
+            $"<mark=#5db8ff>WWWWWWWW</mark>\n" +
+            $"<mark=#5db8ff>WWWWWWWW</mark>\n" +
+            $"<mark=#5db8ff>WWWWWWWW</mark>\n" +
             $"<mark=#b8e1ff>WWWWWWWW</mark>\n" +
             $"<mark=#b8e1ff>WWWWWWWW</mark></size>",
         };
@@ -100,55 +105,29 @@ namespace EndKnot
     // ============================================================
     internal sealed class RiptidePredictiveGhostCNO : CustomNetObject
     {
-        private const int FontSizeAbsolute = 300;
+        private const int FontSizeAbsolute = 20;
 
-        // 半透明 (AA=80 ≈ 50% alpha) の予告スプライト。
+        // 半透明 (AA=80 ≈ 50% alpha) の予告スプライト。本体 CNO と同 8×8 形状。
         // </alpha> 閉じタグ禁止 (TMP タグ罠 #10)、<color=#xxxxxx80> ベースで実装
+        private const string GhostRow = "<color=#b8e1ff80>WWWWWWWW</color>";
+
         private static readonly string[] GhostSprites =
         {
-            // Index 0 : 左→右
+            // Index 0 : 左→右 (8×8、全体半透明)
             $"<size={FontSizeAbsolute}><line-height=97%>" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color></size>",
+            $"{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}</size>",
 
-            // Index 1 : 右→左
+            // Index 1 : 右→左 (同上)
             $"<size={FontSizeAbsolute}><line-height=97%>" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color></size>",
+            $"{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}</size>",
 
-            // Index 2 : 上→下
+            // Index 2 : 上→下 (同上)
             $"<size={FontSizeAbsolute}><line-height=97%>" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color></size>",
+            $"{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}</size>",
 
-            // Index 3 : 下→上
+            // Index 3 : 下→上 (同上)
             $"<size={FontSizeAbsolute}><line-height=97%>" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color>\n" +
-            $"<color=#b8e1ff80>WWWWWWWW</color></size>",
+            $"{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}\n{GhostRow}</size>",
         };
 
         public static string GetGhostSprite(int directionIndex)

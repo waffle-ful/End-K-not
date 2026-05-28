@@ -290,7 +290,8 @@ internal static class ChatCommands
             new("UnDummy", "", Command.UsageLevels.Host, Command.UsageTimes.InGame, UnDummyCommand, true, true),
             new("DummyFree", "", Command.UsageLevels.Host, Command.UsageTimes.InGame, DummyFreeCommand, true, true),
             new("SizeTest", "", Command.UsageLevels.Host, Command.UsageTimes.InGame, SizeTestCommand, true, true),
-            new("SizeClean", "", Command.UsageLevels.Host, Command.UsageTimes.InGame, SizeCleanCommand, true, true)
+            new("SizeClean", "", Command.UsageLevels.Host, Command.UsageTimes.InGame, SizeCleanCommand, true, true),
+            new("RipSize", "[size]", Command.UsageLevels.Host, Command.UsageTimes.InGame, RipSizeCommand, true, true)
         ];
     }
 
@@ -2951,8 +2952,62 @@ internal static class ChatCommands
         if (!player.FriendCode.GetDevUser().up && !player.FriendCode.IsLocalDev()) return;
 
         int removed = SizeTestCNO.DespawnAll();
+        removed += RiptideWaveSizeTestCNO.DespawnAll();
         Logger.Info($"DevCmd /sizeclean: removed={removed}", "DevCmd");
         Utils.SendMessage($"[sizeclean] Despawned {removed} size-test marker(s).", player.PlayerId);
+    }
+
+    private static void RipSizeCommand(PlayerControl player, string text, string[] args)
+    {
+        if (!player.FriendCode.GetDevUser().up && !player.FriendCode.IsLocalDev()) return;
+
+        Vector2 origin = player.GetTruePosition() + new Vector2(2f, 0f);
+
+        // 第2引数 mode:
+        //   /ripsize            → 絶対モード row (20/30/40/50/80)
+        //   /ripsize percent    → パーセントモード row (100%/150%/200%/250%/300%)
+        //   /ripsize default    → タグ無しデフォルト 5 個並び
+        //   /ripsize 200%       → 単発 percent 指定
+        //   /ripsize 50         → 単発 absolute 指定
+        if (args.Length >= 2)
+        {
+            string arg = args[1].Trim();
+            if (arg.Equals("percent", System.StringComparison.OrdinalIgnoreCase))
+            {
+                int n1 = RiptideWaveSizeTestCNO.SpawnRow(origin, RiptideWaveSizeTestCNO.Mode.Percent);
+                Logger.Info($"DevCmd /ripsize percent: spawned={n1}", "DevCmd");
+                Utils.SendMessage($"[ripsize] Spawned {n1} Riptide sprites at 100%/150%/200%/250%/300% (25u apart). /sizeclean to remove.", player.PlayerId);
+                return;
+            }
+            if (arg.Equals("default", System.StringComparison.OrdinalIgnoreCase))
+            {
+                int n2 = RiptideWaveSizeTestCNO.SpawnRow(origin, RiptideWaveSizeTestCNO.Mode.Default);
+                Logger.Info($"DevCmd /ripsize default: spawned={n2}", "DevCmd");
+                Utils.SendMessage($"[ripsize] Spawned {n2} Riptide sprites with NO size tag (TMP default, 8u apart). /sizeclean to remove.", player.PlayerId);
+                return;
+            }
+            // "200%" / "50" 単発
+            if (arg.EndsWith("%") && int.TryParse(arg.TrimEnd('%'), out int pct))
+            {
+                pct = Math.Clamp(pct, 10, 1000);
+                RiptideWaveSizeTestCNO.SpawnOne(origin, pct + "%");
+                Logger.Info($"DevCmd /ripsize: single percent={pct}%", "DevCmd");
+                Utils.SendMessage($"[ripsize] Spawned 1 Riptide sprite at size={pct}%. Walk around to measure world width.", player.PlayerId);
+                return;
+            }
+            if (int.TryParse(arg, out int abs))
+            {
+                abs = Math.Clamp(abs, 10, 2000);
+                RiptideWaveSizeTestCNO.SpawnOne(origin, abs.ToString());
+                Logger.Info($"DevCmd /ripsize: single absolute={abs}", "DevCmd");
+                Utils.SendMessage($"[ripsize] Spawned 1 Riptide sprite at size={abs} (absolute). Walk around to measure world width.", player.PlayerId);
+                return;
+            }
+        }
+
+        int spawned = RiptideWaveSizeTestCNO.SpawnRow(origin, RiptideWaveSizeTestCNO.Mode.Absolute);
+        Logger.Info($"DevCmd /ripsize absolute row: spawned={spawned}", "DevCmd");
+        Utils.SendMessage($"[ripsize] Spawned {spawned} Riptide sprites at sizes 20/30/40/50/80 absolute (30u apart). Try '/ripsize percent' or '/ripsize default' too. /sizeclean to remove.", player.PlayerId);
     }
 
     private static void KCountCommand(PlayerControl player, string text, string[] args)

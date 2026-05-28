@@ -86,6 +86,17 @@ public class Riptide : RoleBase
     private static Vector2 MapMax;
     private static Vector2 MapCenter;
 
+    // CNO 視覚オフセット (TMP bottom-center anchor 仕様):
+    //   CreateNetObject は sprite を nameText に shapeshift-text で注入。
+    //   nameText は player body の上方に bottom-center anchor で描画されるため、
+    //   8 行スプライトの視覚中心は sub-CNO transform.position から +Y 方向に
+    //   半分シフトする。当たり判定は wave.Position (= sub-CNO 位置) を基準に
+    //   行うため、IsPlayerInWave で visual center 補正が必要 (2026-05-27 追加)。
+    //   FontSizeAbsolute=20 × 8 行で実機推定 ~28u 高さ → 半分 14u
+    private const float VisualVerticalOffset = 14f;
+    // スプライト視覚幅/高さ (8 文字/行 × 視覚 ~3.5u/char、line-height=97%):
+    private const float VisualSpriteExtent = 28f;
+
     public override bool IsEnable => On;
 
     // ============================================================
@@ -99,7 +110,8 @@ public class Riptide : RoleBase
         // AutoSetupOption は id+2 から開始
 
         setup
-            .AutoSetupOption(ref BaseWaveSpeedOpt, 1.0f, new FloatValueRule(0.5f, 10f, 0.25f), OptionFormat.Multiplier)
+            // 8×8 W グリッド size=20 で視覚 ~28u → 帯厚も 28u 相当 (半分 14)、波速度も少し速め
+            .AutoSetupOption(ref BaseWaveSpeedOpt, 2.5f, new FloatValueRule(0.5f, 10f, 0.25f), OptionFormat.Multiplier)
             .AutoSetupOption(ref EnableAccelerationOpt, true)
             .AutoSetupOption(ref AccelerationRateOpt, 0.15f, new FloatValueRule(0f, 1f, 0.05f), OptionFormat.Multiplier, overrideParent: EnableAccelerationOpt)
             .AutoSetupOption(ref SlowMultiplierOpt, 0.5f, new FloatValueRule(0.1f, 1f, 0.05f), OptionFormat.Multiplier)
@@ -107,8 +119,8 @@ public class Riptide : RoleBase
             .AutoSetupOption(ref MaxConcurrentDirectionsOpt, 3, new IntegerValueRule(1, 8, 1), OptionFormat.Times)
             .AutoSetupOption(ref CanKillManuallyOpt, true)
             .AutoSetupOption(ref KillCooldownOpt, 30, new IntegerValueRule(0, 120, 1), OptionFormat.Seconds, overrideParent: CanKillManuallyOpt)
-            .AutoSetupOption(ref WaveBandThicknessOpt, 4f, new FloatValueRule(0.5f, 15f, 0.5f), OptionFormat.Multiplier)
-            .AutoSetupOption(ref WaveLateralExtentOpt, 40f, new FloatValueRule(10f, 80f, 5f), OptionFormat.Multiplier)
+            .AutoSetupOption(ref WaveBandThicknessOpt, 14f, new FloatValueRule(0.5f, 25f, 0.5f), OptionFormat.Multiplier)
+            .AutoSetupOption(ref WaveLateralExtentOpt, 30f, new FloatValueRule(10f, 80f, 5f), OptionFormat.Multiplier)
             .AutoSetupOption(ref ShowPredictiveGhostOpt, false);
     }
 
@@ -146,12 +158,12 @@ public class Riptide : RoleBase
                     if (pos.x > maxX) maxX = pos.x;
                     if (pos.y > maxY) maxY = pos.y;
                 }
-                // spawn 点からマップ端を推定 (+20 unit のマージン)
-                // CNO が TP() で動くようになった後 (2026-05-25 root cause fix) は、spawn を
-                // マップ外側に十分遠くしても波がプレイヤーに届く。マージン +20 + GetWaveStartPosition
-                // の -5 で spawn はマップ実端から 25 unit 外側 → 画面外から波が登場する演出。
-                MapMin = new Vector2(minX - 50f, minY - 50f);
-                MapMax = new Vector2(maxX + 50f, maxY + 50f);
+                // spawn 点はマップ実端から 20 unit 外側 (margin 15 + GetWaveStartPosition の -5)。
+                // 視覚スプライト幅 ~28u の半分が wave.Position 中心から +X (or 対称) 方向に張り出すので、
+                // 実質スプライト前縁はマップ端から 6u 外側 → spawn 時に画面外から登場する演出。
+                // 過去 (margin 50f) は spawn が遠すぎて波が到達するまで時間がかかりすぎていた。
+                MapMin = new Vector2(minX - 15f, minY - 15f);
+                MapMax = new Vector2(maxX + 15f, maxY + 15f);
                 MapCenter = new Vector2((minX + maxX) / 2f, (minY + maxY) / 2f);
                 MapBoundsValid = true;
             }
@@ -441,14 +453,16 @@ public class Riptide : RoleBase
 
     private static bool IsPlayerInWave(PlayerControl target, RiptideWaveState wave)
     {
-        Vector2 delta = target.GetTruePosition() - wave.Position;
+        // TMP bottom-center anchor 仕様により、視覚スプライト中心は
+        // sub-CNO transform.position から +Y 方向に VisualVerticalOffset シフトする。
+        // wave.Position は sub-CNO 位置なので、ヒット判定は視覚中心を基準にすべき。
+        // この補正により「波に当たって見えるのに死なない」問題を解消 (2026-05-27)。
+        Vector2 visualCenter = wave.Position + new Vector2(0f, VisualVerticalOffset);
+        Vector2 delta = target.GetTruePosition() - visualCenter;
         float along = Vector2.Dot(delta, wave.Direction);
-        // 判定: 波の中心 ±WaveBandThickness (前後対称)。
-        // 旧 along in [-WaveBandThickness, 0] (後方のみ) は TMP sprite の anchor が
-        // 左下基準で、wave.Position と sprite 視覚中心がズレるため判定外れの原因に。
-        // ForceField の HitRadiusScale パターン同様、視覚と判定を実機合わせで対称化。
+        // 判定: 視覚中心 ±WaveBandThickness (motion 方向、前後対称)
         if (Mathf.Abs(along) > WaveBandThickness) return false;
-        // 横方向
+        // perpendicular: 視覚中心からの距離が半マップ幅以内
         float lateralSq = (delta - wave.Direction * along).sqrMagnitude;
         float halfExtent = WaveLateralExtent / 2f;
         return lateralSq <= halfExtent * halfExtent;
@@ -605,16 +619,19 @@ public class Riptide : RoleBase
         };
     }
 
-    // sub-CNO の垂直オフセット (中心から ±7.5 unit、間隔 5)
-    private static readonly float[] SubOffsets = { 7.5f, 2.5f, -2.5f, -7.5f };
+    // sub-CNO 垂直オフセット — 2026-05-26 修正:
+    //   スプライトを 2 col × 8 row / 8 col × 2 row の縦長/横長帯に再較正したことで
+    //   1 個でマップ縦/横幅をカバーできるようになり、4 個並びは不要に。
+    //   sub-CNO 個数削減 → burst spawn 帯域問題を構造的に回避。
+    private static readonly float[] SubOffsets = { 0f };
 
     // ============================================================
     // RiptideWaveState — per-wave 状態管理
     // ============================================================
     private sealed class RiptideWaveState
     {
-        public readonly List<RiptideWaveCNO> SubCNOs = new(4);
-        public readonly List<RiptidePredictiveGhostCNO> GhostSubCNOs = new(4);
+        public readonly List<RiptideWaveCNO> SubCNOs = new(1);
+        public readonly List<RiptidePredictiveGhostCNO> GhostSubCNOs = new(1);
         public Vector2 Position;
         public readonly Vector2 Direction;
         public readonly float Speed;   // 生成時に capture (罠対策 #11)

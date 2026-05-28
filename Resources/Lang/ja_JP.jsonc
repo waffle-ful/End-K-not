@@ -12480,6 +12480,8 @@
   "CommandDescription.SizeTest": "5 個の 〇 を 600/800/1000/1200/1500% でスポーン、TMP <size> 描画限界を視覚検証 [dev]",
   "CommandForms.SizeClean": "sizeclean",
   "CommandDescription.SizeClean": "全サイズテストマーカーを消去 [dev]",
+  "CommandForms.RipSize": "ripsize",
+  "CommandDescription.RipSize": "Riptide の 8x8 W スプライトを並べて測定。引数なし=絶対 20/30/40/50/80、'percent'=100/150/200/250/300%、'default'=size タグ無し、'200%' や '50' で単発 [dev]",
   "CommandForms.DevTp": "devtp",
   "CommandForms.DevTpTo": "devtpto",
   "CommandForms.GiveKill": "givekill,gk",

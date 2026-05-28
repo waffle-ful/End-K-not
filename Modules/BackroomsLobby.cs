@@ -444,26 +444,44 @@ public static class BackroomsLobby
     }
 
     // ========================================================================
-    // per-wall ghost SR feature flag (2026-05-27 後段で無効化)
-    //   各壁が CastRayLength で個別に「視界内/遮蔽中」判定 → alpha を 0 or 0.30 で切替する設計だったが、
-    //   隣接壁で alpha がバラついて「並列して並んだ壁が一つの壁に見えない」(cell 境界 V 字状) 症状の主因に。
-    //   user 報告 (2026-05-27): 「並列して並んだ壁は一つの壁ですので一つとして計算しないとダメ」
-    //   ⇒ 当面 false 固定で feature 無効化。Upper dark mesh (+50) + CastRayLength tFar は維持 (occlusion 効果は健在)。
-    //   2026-05-28: フラグ true 再有効化を試したが、ghost が body/corpse の上にも乗って「壁の向こうの死体が見える」
-    //     副作用が発覚 → 即 revert。tFar 設計上、wall chain の先 (= 開けた空間) も vision donut 内になるため、
-    //     body は Upper dark mesh の alpha gradient 中段で部分可視。ghost feature は body 可視に直接寄与しないはずだが、
-    //     注意散漫を生むので根本対処が必要 (tNear 戻し + wall を Upper dark の上で常時描画 等)。
+    // per-wall ghost SR feature (2026-05-28 v7 で「暗色 overlay」として再有効化)
+    //   旧設計: wall.png を α=0.30 で silhouette 描画 (Upper dark の上に「うっすら見える壁」)
+    //     → cell 境界の alpha バラつき + tFar chain で「奥の壁が visible 扱い」になる副作用で 2 度 disable
+    //   新設計 (v7): 黒 solid overlay を α gradient で重ねて壁本体を直接 darken。
+    //     - donut mesh は chain 復活 (smooth) で V 字段差を回避
+    //     - per-wall α は `CastRayFirstHit` (chain なし first-hit) で「occluder か遮蔽中か」を smoothstep gradient で判定
+    //     - smoothstep が cell 境界の浮動小数ノイズを吸収して V 字を出さない
     // ========================================================================
-    private const bool EnableWallGhost = false;
+    private const bool EnableWallGhost = true;
 
-    // Ghost sprite color
-    //   WallH: 白 (wall.png をそのまま透過表示)
-    //   WallV: WallDarkColor より少し明るい褐色 ≒ #1a1410。Upper dark (#0a0805) との差で silhouette が浮き出る
-    private static readonly Color WallGhostColorH = new(1f, 1f, 1f, 0f);
-    private static readonly Color WallGhostColorV = new(0.1f, 0.08f, 0.06f, 0f);
+    // Ghost overlay color。暗色 overlay として壁全体を覆って darken する用途。
+    //   color = 黒 (0,0,0)、α は per-frame UpdateVision で 0 → WallGhostAlphaDarkZone に gradient で動く
+    //   旧設計の wall.png silhouette とは別物 (今は壁本体を黒で塗り潰す形)
+    private static readonly Color WallGhostColorH = new(0f, 0f, 0f, 0f);
+    private static readonly Color WallGhostColorV = new(0f, 0f, 0f, 0f);
 
-    // dark zone の壁 ghost に乗せる alpha。チューニング値、要実機確認 (0.20 だと薄すぎ・0.45 だと濃すぎる感)
+    // 完全 occluded 時の overlay 最大 α。0.30 = 30% 黒 overlay で壁が薄暗い感。0.20-0.50 範囲で要調整
     private const float WallGhostAlphaDarkZone = 0.30f;
+
+    // overlay α が 0 → WallGhostAlphaDarkZone に smoothstep で上がりきるまでの距離 (u)。
+    // CastRayFirstHit の hit dist から wall 中心がこの距離を超えると max alpha。
+    // 大きいほど cell 境界での α 段差が滑らか (V 字抑制) 、小さいほど rapid な fade。
+    // 0.5 = cell 1 個分の半分で fade 完了 (wall 内側まで影が浸透する形)
+    private const float WallShadowThreshold = 0.5f;
+
+    // Directional shadow: player の南 (y < player.y) にある壁を darken。AU vanilla の
+    // 擬似 3D 視点 (camera は player のやや南からやや北向き) で「player の背中側 = 南側」
+    // の壁は見えにくいという見え方を再現する。
+    // user 観察 (2026-05-28): 「player より上の壁は見える、下の壁は見えない」
+    // 値は dy (= wall.cy - player.y) が -WallShadowYThreshold を超えると max alpha。
+    // 小さい値 (0.3-0.5) だと「player 真南から急に影」、大きい値 (1.5-2.0) だと緩やかな fade
+    private const float WallShadowYThreshold = 0.5f;
+
+    // 壁の closest point がこの距離以内なら occluder 確定 (occlusion 判定をスキップ)。
+    // wall center で ray test すると隣接壁の角を grazing して「後ろにいる」誤判定が出るため、
+    // 「壁の AABB の一部が player の immediate vicinity にあるなら直接見える」と扱う安全網。
+    // 1.0 = cell ぴったり 1 個分。adjacent 壁の closest corner (~0.5u) は内側、奥の壁 (~1.5u) は外側
+    private const float CloseRangeNoOcclusionRadius = 1.0f;
 
     // BuildWallHComposite / WallV case が末尾で 1 個だけ生成する子 GO「WallGhost」を逆引きする。
     // SpawnTile 末尾の WallGhostRenderers.Add で使用。failed spawn / test pattern では null 返却。
@@ -488,7 +506,8 @@ public static class BackroomsLobby
         ghost.transform.localPosition = Vector3.zero;
         ghost.transform.localScale = isH ? new Vector3(1f, 1f, 1f) : new Vector3(0.4f, 1f, 1f);
         SpriteRenderer sr = ghost.AddComponent<SpriteRenderer>();
-        sr.sprite = isH ? (WallPngSprite ?? WallSpriteH) : BaselineSprite;
+        // 黒 overlay として壁を覆う (v7) ため sprite は H/V 共通の BaselineSprite (procedural white)
+        sr.sprite = BaselineSprite;
         sr.color = isH ? WallGhostColorH : WallGhostColorV;
         sr.sortingLayerName = "Default";
         sr.sortingOrder = 60;
@@ -2200,20 +2219,22 @@ public static class BackroomsLobby
         //    map (壁/床) は触らず Upper dark gradient のまま「薄く見える」を維持。
         UpdateEntityVisibility(player);
 
-        // 10. Per-wall ghost α 更新 (2026-05-27、後段で disable)
-        //    EnableWallGhost=false の間は完全に skip。隣接壁で alpha がバラつく「各ブロック個別計算」問題を回避。
-        //    Upper dark mesh (+50) が dark zone を一律に覆うため、壁は dark zone で「均一に消える」絵になる。
+        // 10. Per-wall ghost α 更新 (v8 2026-05-28 — directional + occlusion の二重判定)
+        //    各 wall に 2 種類の影要因を計算して max を取る:
+        //
+        //    (a) Directional: player の y より南 (dy < 0) にある壁を darken
+        //        擬似 3D 視点で「背中側 = 南側」の壁を見えにくくする (AU vanilla 風)
+        //    (b) Occlusion: `CastRayFirstHit` で別の壁の奥に隠れた壁を darken
+        //        per-ray な occluder 判定
+        //
+        //    targetAlpha = max(directional, occlusion) * WallGhostAlphaDarkZone
+        //    → 北側で occluder の壁: α=0 (明るい)
+        //    → 北側で occluded の壁: α 増 (薄暗い)
+        //    → 南側の壁: 全て darken (occlusion 不問)
         if (!EnableWallGhost) return;
 
-        //    DarkRadius 圏内の全壁を回し、player→wall 中心方向に CastRayLength で 1 ray テスト。
-        //    hit dist ≥ wall 中心距離 → 視界内 → ghost α=0 (Upper dark の上に何も乗せない、wall body が donut hole で full color 表示)
-        //    hit dist <  wall 中心距離 → 遮蔽中 → ghost α=ShadeAlphaDarkZone (Upper dark の上に wall.png 透過、うっすら silhouette)
-        //
-        //    _nearbyAabbs は 8u 圏内だけなので使えない。WallAabbs 全件に対し DarkRadius (25u) で別 filter。
-        //    最大 ~50-100 wall、idle skip と pause で 0 cost。
         float darkR2 = DarkRadius * DarkRadius;
         int wallCount = WallAabbs.Count;
-        // WallGhostRenderers と WallAabbs は index 完全一致 (Add/RemoveAt を全 site で同期)
         for (int wi = 0; wi < wallCount; wi++)
         {
             SpriteRenderer ghost = wi < WallGhostRenderers.Count ? WallGhostRenderers[wi] : null;
@@ -2231,21 +2252,51 @@ public static class BackroomsLobby
                 continue;
             }
 
-            // wall 中心までの距離・方向 (degenerate 防止)
             float dist = Mathf.Sqrt(d2);
             if (dist < 1e-4f) { ghost.color = SetAlpha(ghost.color, 0f); continue; }
-            float cos = dx / dist;
-            float sin = dy / dist;
 
-            // 既存 CastRayLength を再利用。ただし _nearbyAabbs に依存するため、ここでは
-            // wall を「視界内 (= 自分自身が最も手前)」と「遮蔽中 (= 自分より手前に別の壁がある)」で分ける必要がある。
-            // CastRayLength は AABB の tFar を返すので、自分自身も hit にカウントされ tFar≒wall back face になる。
-            // → wall 中心距離 ≤ hit dist なら自分が最も手前 (= 視界内)
-            float hit = CastRayLength(player, cos, sin);
-            bool visible = dist <= hit + 0.05f; // epsilon でフェンス cell の浮動小数誤差吸収
+            // (a) Directional shadow: dy < 0 (南側) で α 増
+            //     -dy / threshold で 0→1 に smoothstep
+            float dirT = Mathf.Clamp01(-dy / WallShadowYThreshold);
+            float dirAlpha = dirT * dirT * (3f - 2f * dirT);
 
-            float targetAlpha = visible ? 0f : WallGhostAlphaDarkZone;
-            // 微小差なら触らず interop call 節約
+            // (b) Occlusion shadow: 別の壁の奥にいるか。
+            //     center ray だけだと近接 wall の grazing で誤判定するので、壁の AABB の
+            //     4 corner それぞれに ray を撃ち、最も visible な corner (= minOvershoot) を採用。
+            //     wall の一部でも player から直接見えるなら「occluder」と判定 → α=0
+            //     close-range guard も維持 (corner test を skip して高速 path)
+            float closestX = Mathf.Clamp(player.x, w.cx - w.halfX, w.cx + w.halfX);
+            float closestY = Mathf.Clamp(player.y, w.cy - w.halfY, w.cy + w.halfY);
+            float closestDx = closestX - player.x;
+            float closestDy = closestY - player.y;
+            float closestDist2 = closestDx * closestDx + closestDy * closestDy;
+
+            float occAlpha = 0f;
+            if (closestDist2 > CloseRangeNoOcclusionRadius * CloseRangeNoOcclusionRadius)
+            {
+                float minOvershoot = float.MaxValue;
+                for (int ci = 0; ci < 4; ci++)
+                {
+                    float cornerX = w.cx + ((ci & 1) == 0 ? -w.halfX : w.halfX);
+                    float cornerY = w.cy + ((ci & 2) == 0 ? -w.halfY : w.halfY);
+                    float cdx = cornerX - player.x;
+                    float cdy = cornerY - player.y;
+                    float cd2 = cdx * cdx + cdy * cdy;
+                    if (cd2 < 1e-4f) { minOvershoot = -1f; break; }
+                    float cd = Mathf.Sqrt(cd2);
+                    float ccos = cdx / cd;
+                    float csin = cdy / cd;
+                    float cornerHit = CastRayFirstHit(player, ccos, csin);
+                    float ov = cd - cornerHit;
+                    if (ov < minOvershoot) minOvershoot = ov;
+                }
+                float occT = Mathf.Clamp01(minOvershoot / WallShadowThreshold);
+                occAlpha = occT * occT * (3f - 2f * occT);
+            }
+
+            // max を取る (どちらかの条件が満たされれば darken)
+            float targetAlpha = Mathf.Max(dirAlpha, occAlpha) * WallGhostAlphaDarkZone;
+
             if (Mathf.Abs(ghost.color.a - targetAlpha) > 0.01f)
                 ghost.color = SetAlpha(ghost.color, targetAlpha);
         }
@@ -2410,23 +2461,21 @@ public static class BackroomsLobby
     }
 
     // 与えられた単位方向 (cos, sin) に origin から ray を撃ち、最初に当たった「連続壁チェーン」の
-    // 向こう側距離を返す。
+    // 向こう側距離 (tFar) を返す。
     //
     // ## 仕様遷移 (重要)
     //
     // 旧 v1: tNear (最近接壁の手前面) を返す
     // v2 (2026-05-27 前段): tFar (最近接壁の向こう側) を返す
-    //   - dark mesh が壁より前面 (sortingOrder=-1) に移ったため、tNear だと壁本体が
-    //     dark mesh に塗りつぶされて見えなくなる
-    // v3 (2026-05-27 後段): **連続する隣接壁を traverse して、チェーン全体の tFar を返す**
-    //   - v2 の問題: 連続する WallH 行で、各 cell の AABB が独立に扱われ、隣 cell との
-    //     共有 edge (e.g., X=0.5) で tFar が打ち切られる。隣の角度で別 cell が new first hit
-    //     になり、tFar が cell ごとに段差状に振動 → 視界内に V 字状の donut inner ring 段差
-    //     ([[plans/image-1-h-h-glowing-haven]] symptom A の根治不全)
-    //   - 対応: 最初の hit を確定したあと、その tFar 出口点が他の壁の入射点 (tNear)
-    //     と一致 (差 < eps) する壁を逐次取り込んで bestExitDist を更新。連続する限り chain
-    //     を伸ばす。これで「並列して並んだ壁は一つの壁」(2026-05-27 ご主人様要望) として
-    //     扱われ、cell 境界の V 字段差が消える
+    //   - 当時 dark mesh が壁より前面 (sortingOrder=-1) で、tNear だと壁本体が dark mesh に塗りつぶされて見えなくなる、が理由
+    // v3 (2026-05-27 後段): **連続する隣接壁を traverse してチェーン全体の tFar を返す**
+    //   - 連続 cell の V 字状段差を chain でならす (並列壁が一つの壁として動く)
+    // v4 (2026-05-28 前段): v1 (tNear) に回帰 — 「壁が自分の影に被って暗くなる」効果のため
+    // v5 (2026-05-28 後段、現状): **v3 (chain tFar) に再回帰**
+    //   - user 要望: 「同じ壁でも視点角度によって影が乗ったり乗らなかったりするように」(2026-05-28)
+    //   - tFar の donut hole は最近接壁の向こうまで延びるので、その壁を occluder とする ray では
+    //     壁が donut hole 内 = 影なし、別の ray で他の壁の奥に隠れる場合は donut shadow 内 = 影あり
+    //   - per-ray の occlusion 判定が「同じ壁でも見える角度では明るく、隠れる角度では暗く」を自然に実現
     //
     // ## ケース
     // - 通常 (origin が AABB 外): 最小 tNear の AABB を選び、その tFar から chain を伸ばす
@@ -2510,31 +2559,107 @@ public static class BackroomsLobby
         // --- Phase 2: 隣接壁 chain を traverse して bestExitDist を伸ばす (キャッシュ参照のみ) ---
         // ある壁の tFar 出口点 = 別壁の tNear 入射点 (差 ≤ eps) なら、その壁を chain に取り込む。
         // 連続 WallH 行 / WallV 列 / L 字接合などで「壁の塊」として動く。
-        // chain depth 上限 8: ray 1 本で 8 cell 以上連続する壁は user 報告環境ではほぼ存在せず、
-        // 安全装置として十分。worst-case compute を半減 (旧 16 → 8)。
-        const float chainEps = 0.02f;
-        int safety = 8;
-        bool extended;
-        do
+        //
+        // v7 (2026-05-28): donut mesh は chain 復活で smooth 描画 (V 字段差を donut shape から排除)。
+        //   per-wall occlusion 暗化は別途 `CastRayFirstHit` (chain なしの first-hit tFar) を使い、
+        //   ghost overlay で表現する。
+        const int ChainExtensionDepth = 8;
+        if (ChainExtensionDepth > 0)
         {
-            extended = false;
-            float exitNow = bestExitDist;
-            float exitMinusEps = exitNow - chainEps;
-            float exitPlusEps = exitNow + chainEps;
-            for (int i = 0; i < count; i++)
+            const float chainEps = 0.02f;
+            int safety = ChainExtensionDepth;
+            bool extended;
+            do
             {
-                if (i == bestIdx) continue;
-                float tN = _tNearCache[i];
-                if (tN < exitMinusEps || tN > exitPlusEps) continue;     // 隣接条件外
-                float tF = _tFarCache[i];
-                if (tF <= exitNow + 1e-4f) continue;                     // chain 前進無し
+                extended = false;
+                float exitNow = bestExitDist;
+                float exitMinusEps = exitNow - chainEps;
+                float exitPlusEps = exitNow + chainEps;
+                for (int i = 0; i < count; i++)
+                {
+                    if (i == bestIdx) continue;
+                    float tN = _tNearCache[i];
+                    if (tN < exitMinusEps || tN > exitPlusEps) continue;     // 隣接条件外
+                    float tF = _tFarCache[i];
+                    if (tF <= exitNow + 1e-4f) continue;                     // chain 前進無し
+                    bestExitDist = tF;
+                    bestIdx = i;
+                    extended = true;
+                    break;
+                }
+            }
+            while (extended && --safety > 0);
+        }
+
+        return bestExitDist < MinHitDistance ? MinHitDistance : bestExitDist;
+    }
+
+    // Phase 1 only — chain extension を走らせず、最初に当たった壁の tFar を返す。
+    // per-wall occlusion 判定用 (chain で繋がった奥の壁を「visible」扱いしないため)。
+    // `CastRayLength` と同じ Phase 1 ロジックだが、戻り値が chain 拡張前の first-hit tFar
+    private static float CastRayFirstHit(Vector2 origin, float cos, float sin)
+    {
+        int count = _nearbyAabbs.Count;
+        if (count > RayCastWallCacheSize) count = RayCastWallCacheSize;
+
+        bool useCosInv = Mathf.Abs(cos) >= 1e-6f;
+        bool useSinInv = Mathf.Abs(sin) >= 1e-6f;
+        float invCos = useCosInv ? 1f / cos : 0f;
+        float invSin = useSinInv ? 1f / sin : 0f;
+
+        float bestHitDist = VisionRadius;
+        float bestExitDist = VisionRadius;
+        for (int i = 0; i < count; i++)
+        {
+            var w = _nearbyAabbs[i];
+            float minX = w.cx - w.halfX;
+            float maxX = w.cx + w.halfX;
+            float minY = w.cy - w.halfY;
+            float maxY = w.cy + w.halfY;
+
+            float tx1, tx2;
+            if (!useCosInv)
+            {
+                if (origin.x < minX || origin.x > maxX) continue;
+                tx1 = float.NegativeInfinity;
+                tx2 = float.PositiveInfinity;
+            }
+            else
+            {
+                tx1 = (minX - origin.x) * invCos;
+                tx2 = (maxX - origin.x) * invCos;
+                if (tx1 > tx2) { (tx1, tx2) = (tx2, tx1); }
+            }
+
+            float ty1, ty2;
+            if (!useSinInv)
+            {
+                if (origin.y < minY || origin.y > maxY) continue;
+                ty1 = float.NegativeInfinity;
+                ty2 = float.PositiveInfinity;
+            }
+            else
+            {
+                ty1 = (minY - origin.y) * invSin;
+                ty2 = (maxY - origin.y) * invSin;
+                if (ty1 > ty2) { (ty1, ty2) = (ty2, ty1); }
+            }
+
+            float tN = Mathf.Max(tx1, ty1);
+            float tF = Mathf.Min(tx2, ty2);
+            if (tF < 0f || tN > tF) continue;
+
+            float thisHit;
+            if (tN > 0f)        thisHit = tN;
+            else if (tF > 0f)   thisHit = 0f;
+            else                continue;
+
+            if (thisHit < bestHitDist)
+            {
+                bestHitDist = thisHit;
                 bestExitDist = tF;
-                bestIdx = i;
-                extended = true;
-                break;
             }
         }
-        while (extended && --safety > 0);
 
         return bestExitDist < MinHitDistance ? MinHitDistance : bestExitDist;
     }

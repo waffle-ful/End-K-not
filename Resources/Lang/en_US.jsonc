@@ -9879,6 +9879,8 @@
   "CommandDescription.SizeTest": "Spawn 5 〇 markers at 600/800/1000/1200/1500% to visually verify TMP <size> rendering limits [dev]",
   "CommandForms.SizeClean": "sizeclean",
   "CommandDescription.SizeClean": "Despawn all size-test markers [dev]",
+  "CommandForms.RipSize": "ripsize",
+  "CommandDescription.RipSize": "Spawn Riptide 8x8 W sprite row. Args: (none)=absolute 20/30/40/50/80, 'percent'=100/150/200/250/300%, 'default'=no size tag, or '200%'/'50' for single [dev]",
   "CommandForms.DayBreak": "daybreak,db",
   "CommandForms.Death": "death,d",
   "CommandForms.DeathNote": "dn,deathnote",
