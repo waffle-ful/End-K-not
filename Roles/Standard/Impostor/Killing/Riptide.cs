@@ -87,15 +87,10 @@ public class Riptide : RoleBase
     private static Vector2 MapCenter;
 
     // CNO 視覚オフセット (TMP bottom-center anchor 仕様):
-    //   CreateNetObject は sprite を nameText に shapeshift-text で注入。
-    //   nameText は player body の上方に bottom-center anchor で描画されるため、
-    //   8 行スプライトの視覚中心は sub-CNO transform.position から +Y 方向に
-    //   半分シフトする。当たり判定は wave.Position (= sub-CNO 位置) を基準に
-    //   行うため、IsPlayerInWave で visual center 補正が必要 (2026-05-27 追加)。
-    //   FontSizeAbsolute=20 × 8 行で実機推定 ~28u 高さ → 半分 14u
-    private const float VisualVerticalOffset = 14f;
-    // スプライト視覚幅/高さ (8 文字/行 × 視覚 ~3.5u/char、line-height=97%):
-    private const float VisualSpriteExtent = 28f;
+    //   FontSizeAbsolute=30 × 8 行で実機推定 ~40u 高さ → 半分 20u
+    private const float VisualVerticalOffset = 20f;
+    // スプライト視覚幅/高さ (size=30 で ~40u/CNO):
+    private const float VisualSpriteExtent = 40f;
 
     public override bool IsEnable => On;
 
@@ -119,8 +114,8 @@ public class Riptide : RoleBase
             .AutoSetupOption(ref MaxConcurrentDirectionsOpt, 3, new IntegerValueRule(1, 8, 1), OptionFormat.Times)
             .AutoSetupOption(ref CanKillManuallyOpt, true)
             .AutoSetupOption(ref KillCooldownOpt, 30, new IntegerValueRule(0, 120, 1), OptionFormat.Seconds, overrideParent: CanKillManuallyOpt)
-            .AutoSetupOption(ref WaveBandThicknessOpt, 14f, new FloatValueRule(0.5f, 25f, 0.5f), OptionFormat.Multiplier)
-            .AutoSetupOption(ref WaveLateralExtentOpt, 30f, new FloatValueRule(10f, 80f, 5f), OptionFormat.Multiplier)
+            .AutoSetupOption(ref WaveBandThicknessOpt, 60f, new FloatValueRule(0.5f, 120f, 0.5f), OptionFormat.Multiplier)
+            .AutoSetupOption(ref WaveLateralExtentOpt, 80f, new FloatValueRule(10f, 200f, 5f), OptionFormat.Multiplier)
             .AutoSetupOption(ref ShowPredictiveGhostOpt, false);
     }
 
@@ -249,7 +244,10 @@ public class Riptide : RoleBase
             int dirIdx = i % WaveDirections.Length;
             float capturedSpeed = speed;
             int capturedDir = dirIdx;
-            float waveDelay = 0.2f * i;
+            // 1 CNO spawn は 3 段の reliable packet (Spawn / Hide loop / Shapeshift trick) を内部で発信し、
+            // バーストすると vanilla anti-cheat の DataFlag rate limit に触れて Hacking kick される (2026-05-28 実機確認)。
+            // sub-CNO 1 個ごとに SubSpawnInterval 秒、方向 1 個ごとに DirectionSpawnInterval 秒の間隔を取る。
+            float waveDelay = DirectionSpawnInterval * i;
 
             LateTask.New(() =>
             {
@@ -267,9 +265,11 @@ public class Riptide : RoleBase
                 var wave = new RiptideWaveState(startPos, direction, capturedSpeed, capturedDir);
                 ActiveWaves.Add(wave);
 
-                // 4 個の sub-CNO を 0.05f * j 間隔でずらして spawn (packet 分散)
+                // 6 個の sub-CNO を SubSpawnInterval 間隔でずらして spawn (packet 分散)。
+                // CombineSendTimeLowering は send timer を巻き戻して即時送信を促す副作用があり、
+                // ここでは逆効果なので使わない (CreateNetObject は内部で DataFlagRateLimiter を経由する)。
                 var capturedWave = wave;
-                for (int j = 0; j < SubOffsets.Length; j++)
+                for (int j = 0; j < SubLayout.Length; j++)
                 {
                     int capturedJ = j;
                     LateTask.New(() =>
@@ -277,18 +277,18 @@ public class Riptide : RoleBase
                         if (!AmongUsClient.Instance.AmHost) return;
                         if (GameStates.IsEnded || GameStates.IsMeeting) return;
                         if (Dead || !ActiveWaves.Contains(capturedWave)) return;
-                        Vector2 subPos = capturedWave.Position + perp * SubOffsets[capturedJ];
-                        Utils.CombineSendTimeLowering(() =>
-                        {
-                            capturedWave.SubCNOs.Add(new RiptideWaveCNO(subPos, capturedDir));
-                        });
-                    }, 0.05f * j, $"Riptide.SubCNOSpawn.dir{capturedDir}.sub{j}");
+                        Vector2 subPos = capturedWave.Position
+                            + perp * SubLayout[capturedJ].x
+                            + direction * SubLayout[capturedJ].y;
+                        capturedWave.SubCNOs.Add(new RiptideWaveCNO(subPos, capturedDir));
+                    }, SubSpawnInterval * j, $"Riptide.SubCNOSpawn.dir{capturedDir}.sub{j}");
                 }
 
                 if (ShowPredictiveGhost)
                 {
-                    // Ghost sub-CNO も同様に 4 個 × 0.05f 間隔で spawn
-                    for (int j = 0; j < SubOffsets.Length; j++)
+                    // Ghost sub-CNO は本体 6 個 spawn が終わった後から SubSpawnInterval 間隔で続けて spawn
+                    float ghostStart = SubSpawnInterval * SubLayout.Length;
+                    for (int j = 0; j < SubLayout.Length; j++)
                     {
                         int capturedJ = j;
                         LateTask.New(() =>
@@ -296,12 +296,11 @@ public class Riptide : RoleBase
                             if (!AmongUsClient.Instance.AmHost) return;
                             if (GameStates.IsEnded || GameStates.IsMeeting) return;
                             if (Dead || !ActiveWaves.Contains(capturedWave)) return;
-                            Vector2 ghostSubPos = capturedWave.Position - direction * 10f + perp * SubOffsets[capturedJ];
-                            Utils.CombineSendTimeLowering(() =>
-                            {
-                                capturedWave.GhostSubCNOs.Add(new RiptidePredictiveGhostCNO(ghostSubPos, capturedDir));
-                            });
-                        }, 0.2f + 0.05f * j, $"Riptide.GhostSubCNOSpawn.dir{capturedDir}.sub{j}");
+                            Vector2 ghostSubPos = capturedWave.Position
+                                + perp * SubLayout[capturedJ].x
+                                + direction * (SubLayout[capturedJ].y - 10f);
+                            capturedWave.GhostSubCNOs.Add(new RiptidePredictiveGhostCNO(ghostSubPos, capturedDir));
+                        }, ghostStart + SubSpawnInterval * j, $"Riptide.GhostSubCNOSpawn.dir{capturedDir}.sub{j}");
                     }
                 }
             }, waveDelay, $"Riptide.WaveSpawn.dir{dirIdx}");
@@ -351,20 +350,37 @@ public class Riptide : RoleBase
             // 単純な Position 代入は field 更新だけで sync しないため不可 (2026-05-25 root cause).
             wave.Position += wave.Direction * wave.Speed * dt;
 
-            // 全 sub-CNO を wave.Position + 垂直オフセットで同期更新
-            Vector2 perpDir = Mathf.Abs(wave.Direction.x) > 0.5f ? Vector2.up : Vector2.right;
-            for (int j = 0; j < wave.SubCNOs.Count; j++)
-                wave.SubCNOs[j]?.TP(wave.Position + perpDir * SubOffsets[j]);
+            // TP throttle (2026-05-28 anti-cheat 対策):
+            //   TP() は毎フレーム呼ぶと毎フレーム RpcSnapTo を発射する仕様
+            //   (TP→SnapToSendFrameCount=30→次フレ即発射→0 clamp、を毎フレ反復)。
+            //   6 sub × 50fps = 300 RPC/秒 で anti-cheat の rate limit を踏むため
+            //   sync 頻度を TPSyncInterval (10Hz 程度) に絞る。
+            //   非モッド側は前回 SnapTo 位置から次まで滑らかに補間されるので視覚断裂は最小。
+            wave.TPSyncTimer += dt;
+            if (wave.TPSyncTimer >= TPSyncInterval)
+            {
+                wave.TPSyncTimer = 0f;
 
-            // Predictive ghost を波前方に追従
-            for (int j = 0; j < wave.GhostSubCNOs.Count; j++)
-                wave.GhostSubCNOs[j]?.TP(wave.Position - wave.Direction * 10f + perpDir * SubOffsets[j]);
+                // 全 sub-CNO を 2D レイアウトに従って同期更新
+                Vector2 perpDir = Mathf.Abs(wave.Direction.x) > 0.5f ? Vector2.up : Vector2.right;
+                for (int j = 0; j < wave.SubCNOs.Count; j++)
+                    wave.SubCNOs[j]?.TP(wave.Position
+                        + perpDir * SubLayout[j].x
+                        + wave.Direction * SubLayout[j].y);
+
+                // Predictive ghost を波前方に追従
+                for (int j = 0; j < wave.GhostSubCNOs.Count; j++)
+                    wave.GhostSubCNOs[j]?.TP(wave.Position
+                        + perpDir * SubLayout[j].x
+                        + wave.Direction * (SubLayout[j].y - 10f));
+            }
 
             // マップ外に出たら despawn (罠対策 #6)
-            bool outOfBounds = wave.Direction.x > 0 && wave.Position.x > MapMax.x + 10f
-                            || wave.Direction.x < 0 && wave.Position.x < MapMin.x - 10f
-                            || wave.Direction.y < 0 && wave.Position.y < MapMin.y - 10f
-                            || wave.Direction.y > 0 && wave.Position.y > MapMax.y + 10f;
+            // parallel オフセット最大 +40f の後端 CNO が完全に画面外になるよう +50f バッファ
+            bool outOfBounds = wave.Direction.x > 0 && wave.Position.x > MapMax.x + 50f
+                            || wave.Direction.x < 0 && wave.Position.x < MapMin.x - 50f
+                            || wave.Direction.y < 0 && wave.Position.y < MapMin.y - 50f
+                            || wave.Direction.y > 0 && wave.Position.y > MapMax.y + 50f;
 
             if (outOfBounds)
             {
@@ -609,21 +625,39 @@ public class Riptide : RoleBase
         if (!MapBoundsValid)
             return Vector2.zero;
 
+        // parallel オフセット +40f の前端 CNO がマップ外になるよう -60f マージン
         return directionIndex switch
         {
-            0 => new Vector2(MapMin.x - 5f, MapCenter.y),   // 左→右: 左端外
-            1 => new Vector2(MapMax.x + 5f, MapCenter.y),   // 右→左: 右端外
-            2 => new Vector2(MapCenter.x, MapMax.y + 5f),   // 上→下: 上端外
-            3 => new Vector2(MapCenter.x, MapMin.y - 5f),   // 下→上: 下端外
+            0 => new Vector2(MapMin.x - 60f, MapCenter.y),  // 左→右: 左端外
+            1 => new Vector2(MapMax.x + 60f, MapCenter.y),  // 右→左: 右端外
+            2 => new Vector2(MapCenter.x, MapMax.y + 60f),  // 上→下: 上端外
+            3 => new Vector2(MapCenter.x, MapMin.y - 60f),  // 下→上: 下端外
             _ => MapCenter
         };
     }
 
-    // sub-CNO 垂直オフセット — 2026-05-26 修正:
-    //   スプライトを 2 col × 8 row / 8 col × 2 row の縦長/横長帯に再較正したことで
-    //   1 個でマップ縦/横幅をカバーできるようになり、4 個並びは不要に。
-    //   sub-CNO 個数削減 → burst spawn 帯域問題を構造的に回避。
-    private static readonly float[] SubOffsets = { 0f };
+    // spawn 間隔 (anti-cheat バースト防止、2026-05-28 実機 Hacking kick の root cause):
+    //   1 CNO spawn = Spawn/Hide-loop/Shapeshift-trick の 3 段 reliable packet。
+    //   6 個 × 4 方向を 0.05f 間隔で連射すると vanilla anti-cheat の rate limit を踏み抜く。
+    //   個別 spawn coroutine が yield する 0.55s より長めに取り、bursts を回避する。
+    private const float SubSpawnInterval = 0.6f;
+    private const float DirectionSpawnInterval = 4.5f;  // 1 方向 = 6 sub × 0.6s = 3.6s + 余裕
+
+    // TP() を呼ぶ頻度 (anti-cheat の RPC rate limit 対策、2026-05-28 実機 Hacking kick で確定):
+    //   CustomNetObject.TP() は SnapToSendFrameCount=30 を立てて次フレで RpcSnapTo 発射する。
+    //   毎フレ TP() = 毎フレ RpcSnapTo (SendOption.None でも anti-cheat の rate にカウントされる)。
+    //   6 CNO × 50fps = 300 RPC/秒 を 6 × 10Hz = 60 RPC/秒 まで絞り、安全圏に収める。
+    private const float TPSyncInterval = 0.1f;
+
+    // sub-CNO 2D レイアウト (2026-05-28):
+    //   各エントリ = (perp オフセット, parallel オフセット)
+    //   size=30 × 8×8 W ≈ 40u/CNO → perp ±20u 2行 × parallel ±40u 3列 = 6 sub-CNO
+    //   合計カバー: 並進方向 120u、垂直方向 80u でマップ全体を包む
+    private static readonly Vector2[] SubLayout =
+    {
+        new(-20f, -40f), new(-20f,   0f), new(-20f,  40f),
+        new( 20f, -40f), new( 20f,   0f), new( 20f,  40f),
+    };
 
     // ============================================================
     // RiptideWaveState — per-wave 状態管理
@@ -645,6 +679,9 @@ public class Riptide : RoleBase
 
         // 確定キル済みセット (重複キル防止)
         public readonly HashSet<byte> AlreadyKilled = [];
+
+        // TP() throttle 用 (anti-cheat RPC rate 対策、2026-05-28)
+        public float TPSyncTimer;
 
         public RiptideWaveState(Vector2 startPos, Vector2 dir, float speed, int dirIdx)
         {

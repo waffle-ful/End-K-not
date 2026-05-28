@@ -26,6 +26,26 @@ internal static class ExtendedPlayerControl
     public static readonly HashSet<byte> TempExiled = [];
     public static bool DontLowerSendTimer;
 
+    // RpcGuardAndKill バースト防止用 (2026-05-28 実機 Hacking kick で確定):
+    //   IntroPatch.cs:1207 + FixKillCooldownTask 等で短時間に複数の SetKillCooldown が
+    //   呼ばれると、各々 0.1s 後の LateTask で RpcGuardAndKill (= MurderPlayer Reliable
+    //   ブロードキャスト) が 1f 内に集中して vanilla anti-cheat の rate limit を踏み抜く。
+    //   ComputeGuardAndKillScheduleDelay で schedule 間隔を最低 0.4 秒に強制する。
+    private static float LastGuardAndKillScheduleTime;
+    private const float GuardAndKillBaseDelay = 0.1f;
+    private const float GuardAndKillMinSpacing = 0.4f;
+
+    private static float ComputeGuardAndKillScheduleDelay()
+    {
+        float now = Time.time;
+        float earliestSchedule = now + GuardAndKillBaseDelay;
+        // 2 秒以上経過していれば前の schedule は無視 (新しいバースト扱い)
+        if (now - LastGuardAndKillScheduleTime < 2f && earliestSchedule < LastGuardAndKillScheduleTime + GuardAndKillMinSpacing)
+            earliestSchedule = LastGuardAndKillScheduleTime + GuardAndKillMinSpacing;
+        LastGuardAndKillScheduleTime = earliestSchedule;
+        return earliestSchedule - now;
+    }
+
     extension(PlayerControl player)
     {
         public void SetRole(RoleTypes role, bool canOverride = true)
@@ -980,7 +1000,14 @@ internal static class ExtendedPlayerControl
             else if (forceAnime || !player.IsModdedClient() || !Options.DisableShieldAnimations.GetBool())
             {
                 player.SyncSettings();
-                LateTask.New(() => player.RpcGuardAndKill(target, fromSetKCD: true), 0.1f, log: false);
+                // バースト防止 (2026-05-28 実機 Hacking kick で確定):
+                //   RpcGuardAndKill は MurderPlayer Reliable RPC を全 client に放出する。
+                //   IntroPatch.cs:1207 + FixKillCooldownTask 等で複数 player に対して
+                //   SetKillCooldown を 1秒以内に bulk 呼出すると、N × MurderPlayer Reliable
+                //   が 1f に集中して vanilla anti-cheat の rate limit を踏み抜く。
+                //   ComputeGuardAndKillScheduleDelay で 0.4秒以上の間隔を強制する。
+                float delay = ComputeGuardAndKillScheduleDelay();
+                LateTask.New(() => player.RpcGuardAndKill(target, fromSetKCD: true), delay, log: false);
             }
             else
             {

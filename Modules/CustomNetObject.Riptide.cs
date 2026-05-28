@@ -19,12 +19,10 @@ namespace EndKnot
     // ============================================================
     internal sealed class RiptideWaveCNO : CustomNetObject
     {
-        // 較正 (2026-05-27 ご主人様 /ripsize 実測):
-        //   size=20 absolute × 8 col W でマップ大半を覆う → 1 col/row ≈ 3〜4 unit
-        //   「マップ全体を覆う巨大波」コンセプトを満たすため 8×8 W グリッドを維持
-        //   視覚中心は transform.position から +Y 方向に半分シフト (TMP bottom-center anchor 仕様)
-        //   ヒット判定はこのオフセットを補正するため Riptide.cs:VisualVerticalOffset で対応
-        private const int FontSizeAbsolute = 20;
+        // 較正 (2026-05-28 ご主人様指示):
+        //   size=30 absolute × 8 col W × 3列2行レイアウト → マップ全体カバー
+        //   1 CNO ≈ 40u × 40u, perp ±20f / parallel ±40f オフセットで 6 sub-CNO 配置
+        private const int FontSizeAbsolute = 30;
 
         // 方向別スプライト — 全て 8 col × 8 row、グラデーションで進行方向を表現
         // 前縁 (進行方向側) = 濃い青 #0095ff、後縁 = 薄い青 #b8e1ff
@@ -105,7 +103,7 @@ namespace EndKnot
     // ============================================================
     internal sealed class RiptidePredictiveGhostCNO : CustomNetObject
     {
-        private const int FontSizeAbsolute = 20;
+        private const int FontSizeAbsolute = 30;
 
         // 半透明 (AA=80 ≈ 50% alpha) の予告スプライト。本体 CNO と同 8×8 形状。
         // </alpha> 閉じタグ禁止 (TMP タグ罠 #10)、<color=#xxxxxx80> ベースで実装
