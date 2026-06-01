@@ -2572,7 +2572,11 @@ internal static class PlayerControlSetRolePatch
 
         string targetName = __instance.GetNameWithRole();
         Logger.Info($"{targetName} => {roleType}", "PlayerControl.RpcSetRole");
-        if (!ShipStatus.Instance.enabled) return true;
+        // ShipStatus.Instance is null in the lobby / before the map finishes loading. Reading
+        // `.enabled` on null threw an NRE on every RpcSetRole, which made the IL2CPP trampoline
+        // swallow the exception and SKIP the original RpcSetRole. Guard with the Unity null check
+        // so the prefix returns true (runs vanilla) instead of throwing. (2026-06-01)
+        if (!ShipStatus.Instance || !ShipStatus.Instance.enabled) return true;
 
         if (roleType is RoleTypes.CrewmateGhost or RoleTypes.ImpostorGhost)
             roleType = __instance.GetGhostRoleBasis();
