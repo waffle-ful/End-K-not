@@ -2173,6 +2173,20 @@ public static class BackroomsLobby
         string state = PerfLogEnabled ? "ON" : "OFF";
         Utils.SendMessage($"Backrooms perf logging = {state}. See log (tag: BackroomsPerf).", targetPid);
         Logger.Info($"Perf logging toggled {state}", "BackroomsPerf");
+        if (PerfLogEnabled) LogHardwareInfo();
+    }
+
+    // 計測 ON 時に 1 度だけマシン構成を吐く。FPS/BB CPU% の生値が「強PC/普通PC どちらの数字か」を
+    // 判断する文脈用。fpsCap (vSync/target) は「60fps しか出ない = モニタ vSync 上限なのか性能上限なのか」の
+    // 切り分けに直結する。SystemInfo 系は 1 度の取得なので per-frame コストはゼロ。
+    private static void LogHardwareInfo()
+    {
+        Logger.Info(
+            $"HW: CPU={SystemInfo.processorType} x{SystemInfo.processorCount}core | " +
+            $"GPU={SystemInfo.graphicsDeviceName} ({SystemInfo.graphicsMemorySize}MB, {SystemInfo.graphicsDeviceType}) | " +
+            $"RAM={SystemInfo.systemMemorySize}MB | " +
+            $"fpsCap: target={Application.targetFrameRate} vSync={QualitySettings.vSyncCount} (vSync>0 なら FPS は モニタ refresh で頭打ち)",
+            "BackroomsPerf");
     }
 
     private static void ResetPerfCounters()
@@ -2238,7 +2252,7 @@ public static class BackroomsLobby
 
         Logger.Info(
             $"[{PerfLogInterval:0.#}s] FPS={fps:0.0} (avg {avgFrameMs:0.0}ms, worst {worstMs:0.0}ms) | " +
-            $"BB CPU={bbCpuPerFrameMs:0.00}ms/f ({bbCpuPct:0.0}% of frame) | " +
+            $"BB CPU={bbCpuPerFrameMs:0.00}ms/f ({bbCpuPct:0.0}% of frame) mem={System.GC.GetTotalMemory(false) / 1048576}MB | " +
             $"rebuilds={_perfVisionRebuilds}/{frames} cull={_perfCullSweeps} stream={_perfStreamUpdates} | " +
             $"tiles active={active}/{total} chunks={_loadedChunks.Count} rays={_lastVisionRayCount} renderersOff={DisabledRenderers.Count} | " +
             $"cam ortho={ortho:0.0} halfW={halfW:0.0}u vs Cull={CullRadius}u Dark={DarkRadius}u" +
