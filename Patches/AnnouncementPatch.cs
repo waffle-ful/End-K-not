@@ -110,8 +110,8 @@ public static class ModNewsHistory
     // 色は DecomposeAnnouncementText を通らない Title / SubTitle / ShortTitle にだけ付ける (赤+黄)。
     private static ModNews BuildOfficialServerNotice()
     {
-        const string red = "#FF1A1A";    // 血赤
-        const string yellow = "#FFD800"; // 行動指示
+        const string accent = "#39D353"; // 前向きな緑 (Title / ShortTitle)。kick 修正後の「対応しました」案内なので赤警告はやめる
+        const string sub = "#FFD800";    // 補足色 (SubTitle)
 
         string listTitle = GetString("ModNews.OfficialServer.ListTitle");
         string title = GetString("ModNews.OfficialServer.Title");
@@ -132,11 +132,11 @@ public static class ModNewsHistory
             // (以前ここを最新にすると落ちると考えたが、真因は force-open の Show() 直叩きだった。最新でも安全)
             Number = 100777,
             Date = "2099-12-31T00:00:00Z",
-            ShortTitle = $"<color={red}><b>⚠ {listTitle}</b></color>",
+            ShortTitle = $"<color={accent}><b>✔ {listTitle}</b></color>",
             // Title は `<color>+<b>` のみにする。`<mark>` で入れ子にすると AU の
             // UpdateAnnouncementText がクリック時に "Length cannot be less than zero" で落ちる (実機ログで確認)。
-            Title = $"<color={red}><b>⚠⚠ {title} ⚠⚠</b></color>",
-            SubTitle = $"<color={yellow}><b>{subTitle}</b></color>",
+            Title = $"<color={accent}><b>{title}</b></color>",
+            SubTitle = $"<color={sub}><b>{subTitle}</b></color>",
             Text = text
         };
     }
