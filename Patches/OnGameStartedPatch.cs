@@ -1608,6 +1608,48 @@ internal static class StartGameHostPatch
                     }
                     catch (Exception e) { Utils.ThrowException(e); }
                 }
+
+                InjectDebugBurst();
+            }
+            catch (Exception e) { Utils.ThrowException(e); }
+        }
+
+        // TEST AID — lets us validate the rate-limit fix with only 1-2 real clients instead of a full lobby.
+        // Reads EndKnot_DATA/debug_burst.txt (next to AlwaysCombos.json). Contents:
+        //   "<N>"          -> inject N harmless dummy SetRole RPCs through the rate limiter (confirm the throttle holds)
+        //   "<N> direct"   -> inject them with a direct flush, bypassing the limiter (reproduce the un-throttled kick)
+        //   absent / "0"   -> off (zero cost — File.Exists short-circuits)
+        // The dummies re-set the target's own role to itself (idempotent), so no real game state changes;
+        // only the reliable-RPC volume to a non-modded client goes up, which is exactly the kick's trigger.
+        private static void InjectDebugBurst()
+        {
+            try
+            {
+                string path = $"{Main.DataPath}/EndKnot_DATA/debug_burst.txt";
+                if (!System.IO.File.Exists(path)) return;
+
+                string[] parts = System.IO.File.ReadAllText(path).Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length == 0 || !int.TryParse(parts[0], out int count) || count <= 0) return;
+                bool bypassThrottle = parts.Length > 1 && parts[1].Equals("direct", StringComparison.OrdinalIgnoreCase);
+
+                PlayerControl target = Main.EnumeratePlayerControls().FirstOrDefault(p => p != null && !p.AmOwner && p.OwnerId >= 0 && !p.IsModdedClient());
+                if (target == null)
+                {
+                    Logger.Warn("DebugBurst: no non-modded client to target (need a vanilla joiner)", "SetRoleBurst");
+                    return;
+                }
+
+                RoleTypes role = target.GetRoleTypes();
+                Logger.Info($"DebugBurst: injecting {count} dummy SetRole RPCs to client {target.OwnerId} (bypassThrottle={bypassThrottle})", "SetRoleBurst");
+
+                CustomRpcSender sender = CustomRpcSender.Create("DebugBurst", SendOption.Reliable, log: false).StartMessage(target.OwnerId);
+                for (var i = 0; i < count; i++) sender.RpcSetRole(target, role, target.OwnerId, noRpcForSelf: false);
+                sender.EndMessage();
+
+                if (bypassThrottle)
+                    sender.SendMessage(); // direct flush = old un-throttled path; should reproduce the Hacking kick at high count
+                else
+                    DataFlagRateLimiter.Enqueue(() => sender.SendMessage(), SendOption.Reliable, count); // paced; host should survive
             }
             catch (Exception e) { Utils.ThrowException(e); }
         }
