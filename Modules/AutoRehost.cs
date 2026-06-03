@@ -46,6 +46,9 @@ public static class AutoRehost
     private static float _nextWaitLogAt; // WaitClean 診断ログのスロットル
     private static int _oldGameId;  // 切断前の GameId (新部屋判定用)
     private static byte _oldMapId;  // 切断前の MapId (Dleks 保持用)
+    // 「オンライン部屋のホストだった」ラッチ。OnGameJoined (AmHost が信頼できる綺麗な瞬間) で更新する。
+    // 本物の kick では切断処理中に AmHost が先に false に倒れることがあるので、live AmHost ではなくこれを見る。
+    private static bool _hostingOnlineLatch;
 
     // ===== tunable =====
     private const float PollInterval = 0.5f;
@@ -69,7 +72,10 @@ public static class AutoRehost
             return;
         }
 
-        bool wasHostingOnline = AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost && GameStates.IsOnlineGame;
+        // 本物の kick では AmHost が切断処理中に倒れることがあるので、live AmHost に加えて
+        // OnGameJoined で記録したラッチも見る (どちらかが「オンラインホストだった」と言えば対象)。
+        bool wasHostingOnline = _hostingOnlineLatch
+                             || (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost && GameStates.IsOnlineGame);
         if (!wasHostingOnline) return;
 
         if (_pending) return;
@@ -276,9 +282,15 @@ public static class AutoRehost
     //    破棄済みの旧部屋では再発火しないので誤検知しない。GameId が旧と違う = 別の新部屋に入った ──
     public static void NotifyJoinedNewLobby()
     {
-        if (!_pending) return;
         AmongUsClient c = AmongUsClient.Instance;
         if (c == null) return;
+
+        // ホスト状態のラッチ更新 (AmHost が信頼できる綺麗な瞬間に記録 → 実 kick 時の判定に使う)。
+        // オンラインのホストなら true、クライアント参加 / freeplay / local なら false。
+        _hostingOnlineLatch = c.AmHost && GameStates.IsOnlineGame;
+
+        // 立て直し進行中の成功検知
+        if (!_pending) return;
         if (!(c.AmHost && GameStates.IsOnlineGame)) return;
         if (c.GameId == _oldGameId) return; // 新しい部屋ではない (stale ガード)
         Success();
