@@ -167,7 +167,7 @@ public static class Camouflage
     {
         if (!AmongUsClient.Instance.AmHost || (!Options.CommsCamouflage.GetBool() && !Camouflager.On && !revive && !notCommsOrCamo) || target == null || (BlockCamouflage && !forceRevert && !revertToDefault && !gameEnd && !revive && !notCommsOrCamo)) return;
 
-        if (target.IsNonModdedDesyncOutfitTarget()) return;
+        if (target.IsNonModdedOnOfficial()) return;
 
         Logger.Info($"New outfit for {target.GetNameWithRole()}", "Camouflage.RpcSetSkin");
 

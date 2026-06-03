@@ -87,10 +87,15 @@ public class Exclusionary : RoleBase
                         sender.StartMessage(target.OwnerId);
                     }
 
-                    sender.StartRpc(player.NetId, RpcCalls.SetPetStr)
-                        .Write("")
-                        .Write(player.GetNextRpcSequenceId(RpcCalls.SetPetStr))
-                        .EndRpc();
+                    // 公式鯖: 非モッドプレイヤーへの見た目変更は kick されるためスキップ (詳細は ExtendedPlayerControl.IsNonModdedOnOfficial)
+                    if (!player.IsNonModdedOnOfficial())
+                    {
+                        sender.StartRpc(player.NetId, RpcCalls.SetPetStr)
+                            .Write("")
+                            .Write(player.GetNextRpcSequenceId(RpcCalls.SetPetStr))
+                            .EndRpc();
+                    }
+
                     sender.StartRpc(player.NetTransform.NetId, RpcCalls.SnapTo)
                         .WriteVector2(new Vector2(50f, 50f))
                         .Write(player.NetTransform.lastSequenceId)
@@ -188,7 +193,8 @@ public class Exclusionary : RoleBase
                 sender.StartMessage(pc.OwnerId);
             }
 
-            if (Options.UsePets.GetBool())
+            // 公式鯖: 非モッドプレイヤーへの見た目変更は kick されるためスキップ (詳細は ExtendedPlayerControl.IsNonModdedOnOfficial)
+            if (Options.UsePets.GetBool() && !player.IsNonModdedOnOfficial())
             {
                 sender.StartRpc(player.NetId, RpcCalls.SetPetStr)
                     .Write(PetsHelper.GetPetId())

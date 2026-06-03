@@ -1242,7 +1242,7 @@ internal static class IntroCutsceneDestroyPatch
                         if (!GameStates.IsInGame) yield break;
                         if (pc == null || pc.Data == null || pc.Is(CustomRoles.GM)) continue;
                         // 公式サーバーでは非モッドの desync クライアントへ pet を spoof すると host が Hacking 切断される。該当者だけスキップ (カスタム鯖には anti-cheat が無いので desync 役職にも配布)
-                        if (pc.IsNonModdedDesyncOutfitTarget()) continue;
+                        if (pc.IsNonModdedOnOfficial()) continue;
 
                         string petId = PetsHelper.GetPetId();
                         PetsHelper.SetPet(pc, petId);
@@ -1260,7 +1260,7 @@ internal static class IntroCutsceneDestroyPatch
                     {
                         if (!GameStates.IsInGame) yield break;
                         if (pc == null || pc.Data == null || pc.IsHost()) continue;
-                        if (pc.IsNonModdedDesyncOutfitTarget()) continue; // 公式サーバーの非モッド desync クライアントへは表示用 shapeshift も送らない (送ると Hacking 切断)。カスタム鯖では送信
+                        if (pc.IsNonModdedOnOfficial()) continue; // 公式サーバーの非モッド desync クライアントへは表示用 shapeshift も送らない (送ると Hacking 切断)。カスタム鯖では送信
 
                         try
                         {

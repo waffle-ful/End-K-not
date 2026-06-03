@@ -778,52 +778,18 @@ internal static class ExtendedPlayerControl
             return player.Is(CustomRoles.Bloodlust) || player.GetCustomRole().IsDesyncRole();
         }
 
-        // outfit spoof (Camouflage / Camouflager 役職 / RpcChangeSkin / pet 配布) 専用の desync 判定。
-        // HasDesyncRole() はメイン役職しか見ないため、基底変更アドオン (Nimble→Engineer / Physicist→Scientist /
-        // Finder→Tracker / Noisy→Noisemaker / Examiner→Detective / Venom→Viper) 由来の desync を取りこぼし、
-        // 非モッドへの outfit spoof が公式鯖 anti-cheat で host を切断する穴になっていた (正準リスト: OnGameStartedPatch.cs:909)。
-        // Bloodlust(→Impostor) は HasDesyncRole() が既にカバー済。
-        // ※ kill cooldown / シールド演出にも使う HasDesyncRole() 自体は変えない (影響範囲を outfit 経路に限定するため別判定にする)。
         // ── AU 2026 公式サーバー anti-cheat 対策 (位置・見た目 共通の判定) ──
-        // host が「非モッド (Vanilla) クライアント」の状態 (NetTransform の SnapTo / outfit RPC) を操作すると、
-        // 公式鯖だけがそれを「他人になりすました不正」と判定し、位置 desync や reason: Hacking 切断を起こす
-        // (2026 アップデートで Innersloth が所有権チェックを追加したため)。
-        // → 公式鯖にいる非モッドプレイヤーが操作対象のとき true。呼出側でその操作をスキップする。
+        // host が「非モッド (Vanilla) クライアント」の状態を操作すると、公式鯖だけがそれを「他人になりすました不正」と判定し、
+        //   ・NetTransform の SnapTo (位置) → その相手だけ位置が同期されず desync
+        //   ・outfit RPC (SetPetStr / SetSkinStr / SetColor / SetHatStr / SetVisorStr / SetNamePlateStr / SetName) → host が reason: Hacking 切断
+        // を起こす (2026 アップデートで Innersloth が送信者所有権チェックを追加したため。EHR upstream Issue #622 でも報告・未修正)。
+        // → 公式鯖にいる非モッドプレイヤーが操作対象のとき true。呼出側でその操作 (TP / outfit spoof) をスキップする。
         // host 自身やモッドクライアントは IsModdedClient()==true なので false (従来どおり全機能動作)。
-        // カスタム / モッドサーバー (aumods.org・duikbo.at・自前鯖など) には anti-cheat が無いため、
-        // IsOfficialServer()==false で常に false を返し、ペット・スキン・TP ドラッグ等が完全に動作する。
+        // カスタム / モッドサーバー (aumods.org・duikbo.at・自前鯖など) には anti-cheat が無いため IsOfficialServer()==false で常に false。
+        // → 公式サーバー側が修正されたら、この判定を使う各ガードをまとめて撤去できる。
         public bool IsNonModdedOnOfficial()
         {
             return Utils.IsOfficialServer() && player != null && !player.IsModdedClient();
-        }
-
-        public bool HasDesyncOutfitBasis()
-        {
-            return player.HasDesyncRole() || player.GetCustomSubRoles().Exists(x => x is
-                CustomRoles.Nimble or
-                CustomRoles.Physicist or
-                CustomRoles.Finder or
-                CustomRoles.Noisy or
-                CustomRoles.Examiner or
-                CustomRoles.Venom);
-        }
-
-        // ── AU 2026 公式サーバー anti-cheat 対策 (※ desync 役職まわりの見た目変更は「カスタムサーバー専用」) ──
-        //
-        // 症状: host が「非モッド (Vanilla) クライアントに割り当てた desync 役職」の NetId を指定して
-        //       outfit 変更 RPC (SetPetStr / SetSkinStr / SetColor / SetHatStr / SetVisorStr / SetNamePlateStr / SetName) を
-        //       送信すると、その瞬間に host 自身が reason: Hacking で切断される。
-        // 原因: 2026 のアップデートで Innersloth の公式サーバーが outfit 系 RPC に「送信者所有権チェック」を追加したため、
-        //       他人 (= 非モッドクライアント) になりすました outfit RPC を不正と判定するようになった。
-        //       RpcSetRoleDesync 自体は通る (ゲームは進む) が、その後の見た目 spoof だけで host が落ちる。
-        //       EHR upstream でも同症状が報告されており (Issue #622)、執筆時点で未修正。
-        // 回避: 公式サーバーにいる時だけ、該当クライアント宛ての outfit spoof をスキップする (見た目だけ犠牲にして切断を防ぐ)。
-        //       カスタム / モッドサーバー (aumods.org・duikbo.at・自前鯖など) には公式 anti-cheat が無いため、
-        //       Utils.IsOfficialServer() が false を返してガードは無効化され、ペット・スキン・カモフラージュ等が完全に動作する。
-        //       → 公式サーバー側が修正されたら、このガードと各呼び出し箇所をまとめて撤去できる。
-        public bool IsNonModdedDesyncOutfitTarget()
-        {
-            return Utils.IsOfficialServer() && player != null && !player.IsModdedClient() && player.HasDesyncOutfitBasis();
         }
 
         public bool IsInsideMap()
@@ -1593,7 +1559,7 @@ internal static class ExtendedPlayerControl
             if (phantom && Options.CurrentGameMode != CustomGameMode.Standard) return;
             if (!Main.Invisible.Add(player.PlayerId)) return;
 
-            player.RpcSetPet("");
+            if (!player.IsNonModdedOnOfficial()) player.RpcSetPet(""); // 公式鯖: 非モッドへの pet 変更は kick されるためスキップ (透明化自体は MakeInvisible 側で行う)
 
             if (!(phantom && PlayerControl.LocalPlayer.IsImpostor()))
                 player.MakeInvisible();

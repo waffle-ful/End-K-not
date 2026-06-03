@@ -19,6 +19,8 @@ internal class Disco : IAddon
 
     public static void ChangeColor(PlayerControl pc)
     {
+        if (pc.IsNonModdedOnOfficial()) return; // 公式鯖: 非モッドプレイヤーへの色変更 RPC は host が kick されるためスキップ (詳細は ExtendedPlayerControl.IsNonModdedOnOfficial)
+
         int colorId = IRandom.Instance.Next(0, 18);
 
         pc.SetColor(colorId);

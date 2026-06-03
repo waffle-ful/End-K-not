@@ -2120,7 +2120,7 @@ internal static class ChatCommands
             return;
         }
 
-        player.RpcSetColor(color);
+        if (!player.IsNonModdedOnOfficial()) player.RpcSetColor(color); // 公式鯖: 非モッドプレイヤーへの色変更は kick されるためスキップ
         Utils.SendMessage(string.Format(GetString("Message.SetColor"), subArgs), player.PlayerId, importance: MessageImportance.Low);
     }
 

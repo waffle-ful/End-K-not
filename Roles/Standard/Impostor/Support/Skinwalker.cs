@@ -206,7 +206,7 @@ public class Skinwalker : RoleBase
     {
         if (!AmongUsClient.Instance.AmHost) return;
 
-        if (pc.IsNonModdedDesyncOutfitTarget()) return;
+        if (pc.IsNonModdedOnOfficial()) return;
 
         var sender = CustomRpcSender.Create($"Skinwalker.RpcWearOutfit({pc.Data.PlayerName})", SendOption.Reliable);
 

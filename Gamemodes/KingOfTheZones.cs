@@ -360,12 +360,16 @@ public static class KingOfTheZones
                 if (!player) continue;
 
                 byte colorId = team.GetColorId();
-                player.SetColor(colorId);
+                // 公式鯖: 非モッドプレイヤーへの見た目変更は kick されるためスキップ (詳細は ExtendedPlayerControl.IsNonModdedOnOfficial)
+                if (!player.IsNonModdedOnOfficial())
+                {
+                    player.SetColor(colorId);
 
-                sender.AutoStartRpc(player.NetId, RpcCalls.SetColor)
-                    .Write(player.Data.NetId)
-                    .Write(colorId)
-                    .EndRpc();
+                    sender.AutoStartRpc(player.NetId, RpcCalls.SetColor)
+                        .Write(player.Data.NetId)
+                        .Write(colorId)
+                        .EndRpc();
+                }
             }
             catch (Exception e) { Utils.ThrowException(e); }
 
@@ -923,7 +927,8 @@ public static class KingOfTheZones
                         byte colorId = PlayerTeams[player.PlayerId].GetColorId();
                         if (player.CurrentOutfit.ColorId == colorId) continue;
 
-                        player.RpcSetColor(colorId);
+                        // 公式鯖: 非モッドプレイヤーへの見た目変更は kick されるためスキップ (詳細は ExtendedPlayerControl.IsNonModdedOnOfficial)
+                        if (!player.IsNonModdedOnOfficial()) player.RpcSetColor(colorId);
                     }
                     catch (Exception e) { Utils.ThrowException(e); }
                 }

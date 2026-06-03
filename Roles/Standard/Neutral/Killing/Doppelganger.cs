@@ -148,6 +148,8 @@ public class Doppelganger : RoleBase
     private static void RpcChangeSkin(PlayerControl pc, NetworkedPlayerInfo.PlayerOutfit newOutfit)
     {
         if (!AmongUsClient.Instance.AmHost) return;
+        // 公式鯖: 非モッドプレイヤーへの見た目変更は kick されるためスキップ (詳細は ExtendedPlayerControl.IsNonModdedOnOfficial)
+        if (pc.IsNonModdedOnOfficial()) return;
         
         var sender = CustomRpcSender.Create($"Doppelganger.RpcChangeSkin({pc.Data.PlayerName})", SendOption.Reliable);
 

@@ -3668,7 +3668,7 @@ public static class Utils
     {
         if (!AmongUsClient.Instance.AmHost) return false;
 
-        if (pc.IsNonModdedDesyncOutfitTarget()) return false;
+        if (pc.IsNonModdedOnOfficial()) return false;
 
         if (pc.Is(CustomRoles.BananaMan))
             newOutfit = BananaMan.GetOutfit(Main.AllPlayerNames.GetValueOrDefault(pc.PlayerId, "Banana"));
