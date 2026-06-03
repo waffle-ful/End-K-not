@@ -178,7 +178,7 @@ internal static class CustomRolesHelper
                 CustomRoles.Assumer => CustomRoles.Impostor,
                 CustomRoles.Augmenter => CustomRoles.Shapeshifter,
                 CustomRoles.Ventriloquist => CustomRoles.Impostor,
-                CustomRoles.EarnestWolf => EarnestWolf.OverKillCount?.GetInt() > 0 ? CustomRoles.Shapeshifter : CustomRoles.Impostor,
+                CustomRoles.EarnestWolf => EarnestWolf.OverKillCount?.GetInt() > 0 ? (UsePets ? CustomRoles.Impostor : CustomRoles.Shapeshifter) : CustomRoles.Impostor,
                 CustomRoles.Echo => CustomRoles.Shapeshifter,
                 CustomRoles.Abyssbringer => UsePets ? CustomRoles.Impostor : CustomRoles.Shapeshifter,
                 CustomRoles.Overheat => UsePets ? CustomRoles.Impostor : CustomRoles.Shapeshifter,
@@ -1169,6 +1169,7 @@ internal static class CustomRolesHelper
             {
                 CustomRoles.Stealth => !Stealth.UseLegacyVersion.GetBool(),
                 CustomRoles.Trapster => !Trapster.LegacyTrapster.GetBool(),
+                CustomRoles.EarnestWolf => EarnestWolf.OverKillCount?.GetInt() > 0,
                 _ => role is CustomRoles.Dasher
                              or CustomRoles.CTFPlayer
                              or CustomRoles.BedWarsPlayer

@@ -82,33 +82,45 @@ public class EarnestWolf : RoleBase
 
         if (OverKillCount.GetInt() > 0)
         {
-            AURoleOptions.ShapeshifterCooldown = 1f;
-            AURoleOptions.ShapeshifterDuration = 1f;
+            if (Options.UsePhantomBasis.GetBool())
+                AURoleOptions.PhantomCooldown = 1f;
+            else if (!Options.UsePets.GetBool())
+            {
+                AURoleOptions.ShapeshifterCooldown = 1f;
+                AURoleOptions.ShapeshifterDuration = 1f;
+            }
         }
     }
 
     public override bool OnShapeshift(PlayerControl shapeshifter, PlayerControl target, bool shapeshifting)
     {
         if (!shapeshifting) return false;
+        ToggleOverKill(shapeshifter);
+        return false;
+    }
 
+    public override bool OnVanish(PlayerControl pc)
+    {
+        ToggleOverKill(pc);
+        return false;
+    }
+
+    public override void OnPet(PlayerControl pc) => ToggleOverKill(pc);
+
+    private void ToggleOverKill(PlayerControl pc)
+    {
         int maxCount = OverKillCount.GetInt();
         // If uses are depleted or infinite mode, toggle is meaningless
         if (maxCount > 0 && KillsDoneInOverKill >= maxCount)
-        {
             OverKillMode = false;
-        }
         else if (maxCount > 0)
-        {
             OverKillMode = !OverKillMode;
-        }
 
         LateTask.New(() =>
         {
-            Utils.NotifyRoles(SpecifySeer: shapeshifter, SpecifyTarget: shapeshifter);
-            shapeshifter.SyncSettings();
+            Utils.NotifyRoles(SpecifySeer: pc, SpecifyTarget: pc);
+            pc.SyncSettings();
         }, 0.2f, "EarnestWolf.Toggle");
-
-        return false;
     }
 
     public override bool OnCheckMurder(PlayerControl killer, PlayerControl target)
