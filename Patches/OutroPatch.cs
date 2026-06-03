@@ -27,8 +27,6 @@ internal static class EndGamePatch
 
         Logger.Info("-----------Game over-----------", "Phase");
 
-        BGMManager.SetEndingBGM();
-
         ChatCommands.DraftResult = [];
         ChatCommands.DraftRoles = [];
         Main.SetRoles = [];
@@ -214,6 +212,8 @@ internal static class SetEverythingUpPatch
         //#######################################
         //      ==Victory Faction Display==
         //#######################################
+
+        BGMManager.SetEndingBGM();
 
         Main.Instance.StartCoroutine(SetupPoolablePlayers());
 
