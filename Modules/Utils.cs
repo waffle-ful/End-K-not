@@ -1842,13 +1842,10 @@ public static class Utils
 
     public static void CheckServerCommand(ref string text, out bool spamRequired)
     {
-        spamRequired = true;
-            
         if (text.StartsWith("/cmd"))
-        {
             text = "/" + text[4..].TrimStart();
-            spamRequired = false;
-        }
+
+        spamRequired = false;
     }
 
     public static bool TempReviveHostRunning;

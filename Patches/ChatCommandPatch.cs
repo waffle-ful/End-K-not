@@ -3904,18 +3904,7 @@ internal static class ChatCommands
 
         if (text.StartsWith('/') && !player.IsModdedClient() && (!GameStates.IsMeeting || MeetingHud.Instance.state is not MeetingHud.VoteStates.Results and not MeetingHud.VoteStates.Proceeding))
         {
-            Utils.CheckServerCommand(ref text, out bool spamRequired);
-            // AutoHidden 対象 (ImpostorChat/JackalChat/LoversChat/Guess) は /cmd 無しでもステルス扱い
-            if (spamRequired && ShouldAutoHide(text)) spamRequired = false;
-            // Innersloth の +25 spec では非 host の /cmd を client-side で host 限定 routing するはずだが、
-            // Switch/Android 等 vanilla client が未実装で生 broadcast が漏れるケースを観測済み。
-            // 生 broadcast を画面外に押し出すため flood-clear を command 実行 *前* に走らせる
-            // (後だと WhisperCommand / SendFactionChat の正規出力まで上書きされる)。
-            if (!spamRequired)
-            {
-                canceled = true;
-                ChatManager.SendPreviousMessagesToAll();
-            }
+            Utils.CheckServerCommand(ref text, out _);
             string[] args = text.Split(' ');
 
             foreach (Command command in Command.AllCommands)
@@ -3931,7 +3920,6 @@ internal static class ChatCommands
                     break;
                 }
 
-                if (command.AlwaysHidden && spamRequired) Utils.SendMessage("\n", player.PlayerId, GetString("NoSpamAnymoreUseCmd"));
                 command.Action(player, text, args);
                 if (command.IsCanceled) canceled |= command.AlwaysHidden || !Options.HostSeesCommandsEnteredByOthers.GetBool();
                 break;
