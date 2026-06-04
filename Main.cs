@@ -68,7 +68,7 @@ public class Main : BasePlugin
     public static readonly string DataPath =
         OperatingSystem.IsAndroid() ? StarData : ".";
 
-    public static readonly Version Version = Version.Parse(PluginVersion);
+    public static readonly Version Version = Version.Parse(PluginVersion.Split('-')[0]);
 
     //public static ManualLogSource Logger;
     public static bool HasArgumentException;
