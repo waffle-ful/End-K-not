@@ -63,6 +63,8 @@ public static class EndKnotFeatureBridge
             new Color(0.60f, 0.60f, 0.60f, 1f), new Color(0.85f, 0.85f, 0.85f, 1f), 1.8f, () => OpenUrlIfSet(GitHubUrl));
         CreateTextButton(overlayLayer, "Website", new Vector3(1.5f, -2.1f, 0f),
             new Color(0.80f, 0.40f, 0.30f, 1f), new Color(0.95f, 0.60f, 0.45f, 1f), 1.8f, () => OpenUrlIfSet(WebsiteUrl));
+
+        LateTask.New(() => ModUpdater.ShowAvailableUpdate(), 0.5f, "ShowUpdatePopupCalamity");
     }
 
     private static void OpenUrlIfSet(string url)

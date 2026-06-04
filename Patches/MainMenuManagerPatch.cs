@@ -224,13 +224,15 @@ public static class MainMenuManagerPatch
         __instance.PlayOnlineButton.OnClick.AddListener((UnityAction)(() =>
         {
             GameOptionsManager.Instance.Initialize();
-            
+
             if (GameOptionsManager.Instance.normalGameHostOptions.MapId == 3 || (GameOptionsManager.Instance.normalGameHostOptions.MapId > 5 && !SubmergedCompatibility.Loaded))
             {
                 GameOptionsManager.Instance.normalGameHostOptions.MapId = 0;
                 GameOptionsManager.Instance.SaveNormalHostOptions();
             }
         }));
+
+        LateTask.New(() => ModUpdater.ShowAvailableUpdate(), 0.5f, "ShowUpdatePopupVanilla");
     }
 
     private static PassiveButton CreateButton(string name, Vector3 localPosition, Color32 normalColor, Color32 hoverColor, Action action, string label, Vector2? scale = null)

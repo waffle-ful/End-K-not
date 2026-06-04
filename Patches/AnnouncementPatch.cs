@@ -141,6 +141,15 @@ public static class ModNewsHistory
         };
     }
 
+    [HarmonyPatch(typeof(AnnouncementPopUp), nameof(AnnouncementPopUp.ShowIfNew))]
+    [HarmonyPrefix]
+    public static bool ShowIfNew_Prefix(AnnouncementPopUp __instance, Action onDismissed)
+    {
+        if (!ModUpdater.UpdatePopupPending) return true;
+        ModUpdater.QueueNewsAfterUpdate(__instance, onDismissed);
+        return false;
+    }
+
     [HarmonyPatch(typeof(PlayerAnnouncementData), nameof(PlayerAnnouncementData.SetAnnouncements))]
     [HarmonyPrefix]
     public static void SetModAnnouncements(ref Il2CppReferenceArray<Announcement> aRange)

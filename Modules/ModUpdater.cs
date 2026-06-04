@@ -20,8 +20,11 @@ public static class ModUpdater
     private const string URLGithub = "https://api.github.com/repos/waffle-ful/End-K-not";
     public const bool ForceUpdate = false;
     public static bool HasUpdate;
+    public static bool UpdatePopupPending;
     private static bool FirstNotify = true;
     private static bool HasOutdate;
+    private static AnnouncementPopUp _queuedNewsInstance;
+    private static Action _queuedNewsOnDismissed;
     public static bool IsBroken;
     private static bool IsChecked;
     private static Version LatestVersion;
@@ -54,6 +57,7 @@ public static class ModUpdater
         if (!OperatingSystem.IsAndroid() && !IsChecked)
         {
             bool done = CheckReleaseFromGithub(Main.BetaBuildUrl.Value != "").GetAwaiter().GetResult();
+            if (HasUpdate) UpdatePopupPending = true;
             Logger.Msg("done: " + done, "CheckRelease");
             Logger.Info("hasupdate: " + HasUpdate, "CheckRelease");
             Logger.Info("forceupdate: " + ForceUpdate, "CheckRelease");
@@ -64,13 +68,39 @@ public static class ModUpdater
 
     public static void ShowAvailableUpdate()
     {
-        if (FirstNotify && HasUpdate)
+        if (!FirstNotify || !HasUpdate)
         {
-            FirstNotify = false;
-            
-            if (!string.IsNullOrWhiteSpace(LatestTitleModName))
-                ShowPopupWithTwoButtons(string.Format(GetString("NewUpdateAvailable"), LatestTitleModName), GetString("updateButton"), onClickOnFirstButton: () => StartUpdate(DownloadUrl, true));
+            UpdatePopupPending = false;
+            return;
         }
+
+        FirstNotify = false;
+
+        if (!string.IsNullOrWhiteSpace(LatestTitleModName))
+            ShowPopupWithTwoButtons(
+                string.Format(GetString("NewUpdateAvailable"), LatestTitleModName),
+                GetString("updateButton"),
+                onClickOnFirstButton: () => { StartUpdate(DownloadUrl, true); OnUpdatePopupClosed(false); },
+                onClickOnSecondButton: () => OnUpdatePopupClosed(true));
+        else
+            OnUpdatePopupClosed(true);
+    }
+
+    private static void OnUpdatePopupClosed(bool triggerNews)
+    {
+        UpdatePopupPending = false;
+        if (!triggerNews || _queuedNewsInstance == null) return;
+        var instance = _queuedNewsInstance;
+        var callback = _queuedNewsOnDismissed;
+        _queuedNewsInstance = null;
+        _queuedNewsOnDismissed = null;
+        instance.ShowIfNew(callback);
+    }
+
+    public static void QueueNewsAfterUpdate(AnnouncementPopUp instance, Action onDismissed)
+    {
+        _queuedNewsInstance = instance;
+        _queuedNewsOnDismissed = onDismissed;
     }
 
     public static string Get(string url)
