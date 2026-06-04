@@ -21,9 +21,9 @@ using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
 using UnityEngine.Networking;
 
-[assembly: AssemblyFileVersion(Main.PluginVersion)]
+[assembly: AssemblyFileVersion("0.4.7.0")]
 [assembly: AssemblyInformationalVersion(Main.PluginVersion)]
-[assembly: AssemblyVersion(Main.PluginVersion)]
+[assembly: AssemblyVersion("0.4.7.0")]
 
 namespace EndKnot;
 
