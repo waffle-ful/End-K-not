@@ -1698,6 +1698,7 @@ public static class BackroomsLobby
         BackroomsAmbient.Stop();
         RestoreEntityVisibility();
         BackroomsShadow.Reset(); // バニラ影ドライバ停止 + 自前 renderer Dispose
+        BackroomsCasters.Clear(); // 壁の輪郭線 caster を破棄
         _overlaySuppressed = false;
 
         // 1. Backrooms タイル全消去
@@ -1785,6 +1786,7 @@ public static class BackroomsLobby
         DestroyOverlay();
         RestoreEntityVisibility();
         BackroomsShadow.Reset(); // バニラ影ドライバ停止 + 自前 renderer Dispose
+        BackroomsCasters.Clear(); // 壁の輪郭線 caster を破棄
         _overlaySuppressed = false;
 
         int wiped = 0;
@@ -1825,6 +1827,7 @@ public static class BackroomsLobby
         _cullValid = false;
         _spawnCullCenterValid = false;
         BackroomsShadow.Reset(); // バニラ影ドライバ停止 + 自前 renderer Dispose (scene 跨ぎで stale 化を防ぐ)
+        BackroomsCasters.Clear(); // 壁の輪郭線 caster を破棄
         _overlaySuppressed = false;
         _visionGO = null; // scene unload で destroy 済 — 参照だけクリア (DestroyVision 経由は不要)
         _visionMF = null;
@@ -2099,8 +2102,13 @@ public static class BackroomsLobby
         if (_visionGO != null) _visionGO.SetActive(!suppress);
         if (_upperVisionGO != null) _upperVisionGO.SetActive(!suppress);
         SetOverlaySuppressed(suppress);
-        if (suppress) RestoreEntityVisibility(); // hard-cut で消した body/player/cosmetic を戻す
-        _lastVisionValid = false;                // 解除後に強制 rebuild
+        if (suppress)
+        {
+            RestoreEntityVisibility(); // hard-cut で消した body/player/cosmetic を戻す
+            _occludersDirty = true;    // 次フレ MaintainWallCasters が壁輪郭線 caster を build (custom vision が既に dirty 消費済みでも確実に)
+        }
+
+        _lastVisionValid = false; // 解除後に強制 rebuild
     }
 
     // /bbshadow [on|off|radius <r>|dark <v> [blur]|status]
@@ -2512,8 +2520,12 @@ public static class BackroomsLobby
     // 計測 ON の時だけ Stopwatch で Backrooms の CPU 時間を測る。
     public static void RunPerFrameUpdates()
     {
-        // バニラ GPU 影ドライバ (armed 時のみ毎フレ Render を駆動。self-guard 済)
-        if (BackroomsConfig.UseVanillaShadow) BackroomsShadow.Drive();
+        // バニラ GPU 影モード: 壁の輪郭線 caster を維持してからドライバを駆動 (どちらも self-guard 済)
+        if (BackroomsConfig.UseVanillaShadow)
+        {
+            MaintainWallCasters();
+            BackroomsShadow.Drive();
+        }
 
         if (!PerfLogEnabled)
         {
@@ -2642,6 +2654,17 @@ public static class BackroomsLobby
             _mergedOccluders.Add(((minX + maxX) * 0.5f, (minY + maxY) * 0.5f, (maxX - minX) * 0.5f, (maxY - minY) * 0.5f));
             i = j;
         }
+    }
+
+    // バニラ影モード時のみ (Phase 2a): 壁が cull/stream で変わっていたら merged occluder を作り直し、
+    // それを layer10 の輪郭線 caster (BackroomsCasters) へ反映する。_occludersDirty を消費する
+    // (UpdateVision は suppress 中で _visionPaused early-return のため dirty を消費しない → ここが消費点)。
+    private static void MaintainWallCasters()
+    {
+        if (!_inBackrooms || !_occludersDirty) return;
+        RebuildMergedOccluders();
+        _occludersDirty = false;
+        BackroomsCasters.Rebuild(_mergedOccluders);
     }
 
     public static void UpdateVision()
