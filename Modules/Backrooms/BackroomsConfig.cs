@@ -21,4 +21,9 @@ public static class BackroomsConfig
 
     // LightCutaway._EdgeBlur の既定。< 0 はバニラ既定のまま触らない。
     public const float DefaultEdgeBlur = -1f;
+
+    // ShadowQuad._Mask = 「バニラ影を受けるスプライト」の bitmask。既定 3 はバニラ map/船 (Unlit/MaskShader) のみ。
+    // 7 に広げると Backrooms タイル (Sprites/Default) も影を受ける (LevelImposter と同方式・実機確認済み)。
+    // バニラ影は per-sprite 受信 (スクリーン overlay でなく _Mask gated) なので、これが Backrooms 影の鍵。
+    public const float ShadowReceiveMask = 7f;
 }

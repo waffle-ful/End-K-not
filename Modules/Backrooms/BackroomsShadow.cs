@@ -29,6 +29,7 @@ public static class BackroomsShadow
 
     private static float _darkLevel = -1f;            // >=0 で ShadowQuad._Color を (v,v,v,1) に毎フレ上書き
     private static float _edgeBlur = -1f;             // >=0 で LightCutaway._EdgeBlur を毎フレ上書き
+    private static float _origShadowMask = float.NaN; // ShadowQuad._Mask の元値 (Restore 用、NaN=未保存)
 
     private static readonly List<GameObject> _testCasters = []; // /bbtestroom で spawn する検証ジオメトリ
 
@@ -59,6 +60,8 @@ public static class BackroomsShadow
 
         try { ls.SetViewDistance(radius); }
         catch (Exception ex) { Logger.Warn($"Arm: SetViewDistance 失敗 {ex.Message}", Tag); }
+
+        ApplyShadowMask(); // ★Backrooms タイルが影を受けるための鍵 (_Mask=3→7)
 
         _driveActive = true;
         _loggedThrow = false;
@@ -99,6 +102,7 @@ public static class BackroomsShadow
             r.Render(LocalPlayerFeet());
 
             ApplyDarkOverride();
+            ApplyShadowMask(); // 毎フレ維持 (バニラが _Mask を戻す場合に備え)
 
             // 毎秒位置診断 + caster query の hits 本数 (EdgeCollider2D が拾われているかの確証)
             _diagTimer += Time.unscaledDeltaTime;
@@ -151,6 +155,7 @@ public static class BackroomsShadow
         _edgeBlur = -1f;
         ClearTestRoom();
         RestoreShadowQuadColor(); // dark override の残り tint を消し、off 後のロビーを通常に戻す
+        RestoreShadowMask();      // _Mask を元 (3) に戻す
 
         if (_ownRenderer != null)
         {
@@ -177,6 +182,36 @@ public static class BackroomsShadow
         catch { /* HudManager/material 未準備 — 無視 */ }
     }
 
+    // ★Backrooms タイルにバニラ影を受けさせる鍵: ShadowQuad._Mask を 3→7 に広げる (LevelImposter 方式)。
+    //   初回に元値を保存しておき、Disarm/Reset で戻す。
+    private static void ApplyShadowMask()
+    {
+        try
+        {
+            if (!HudManager.InstanceExists || HudManager.Instance.ShadowQuad == null) return;
+            Material m = HudManager.Instance.ShadowQuad.material;
+            if (m == null || !m.HasProperty("_Mask")) return;
+            if (float.IsNaN(_origShadowMask)) _origShadowMask = m.GetFloat("_Mask"); // 初回に元値保存
+            m.SetFloat("_Mask", BackroomsConfig.ShadowReceiveMask);
+        }
+        catch { /* マテリアル未準備 — 無視 */ }
+    }
+
+    private static void RestoreShadowMask()
+    {
+        try
+        {
+            if (float.IsNaN(_origShadowMask)) return;
+            if (HudManager.InstanceExists && HudManager.Instance.ShadowQuad != null)
+            {
+                Material m = HudManager.Instance.ShadowQuad.material;
+                if (m != null && m.HasProperty("_Mask")) m.SetFloat("_Mask", _origShadowMask);
+            }
+        }
+        catch { /* 無視 */ }
+        finally { _origShadowMask = float.NaN; }
+    }
+
     // scene teardown (ゲーム突入 / lobby reload / 退室) 用。全例外を握り潰し、unload 後の ls.renderer には触らない。
     public static void Reset()
     {
@@ -187,6 +222,7 @@ public static class BackroomsShadow
         _diagTimer = 0f;
         _darkLevel = -1f;
         _edgeBlur = -1f;
+        RestoreShadowMask(); // _Mask を元に戻す (HudManager 健在なら。NaN 化は finally で必ず)
 
         if (_ownRenderer != null)
         {

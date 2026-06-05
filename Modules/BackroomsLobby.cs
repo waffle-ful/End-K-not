@@ -2210,6 +2210,49 @@ public static class BackroomsLobby
                 Utils.SendMessage($"tile material renderQueue = {q} ({n}個)。影が出れば tile 側 renderQueue で直る", pid);
                 break;
             }
+            case "mask":
+            {
+                // ★本命 (advisor): AU 影は per-sprite 受信。ShadowQuad._Mask が「影を受けるレイヤー」の bitmask。
+                //   既定 3 はバニラのみ。LevelImposter は SetInt("_Mask",7) でランタイム sprite に影を受けさせる。
+                int mk = args is { Length: >= 3 } && int.TryParse(args[2], out int mv) ? mv : 7;
+                if (HudManager.InstanceExists && HudManager.Instance.ShadowQuad != null && HudManager.Instance.ShadowQuad.material != null)
+                {
+                    Material m = HudManager.Instance.ShadowQuad.material;
+                    float cur = m.HasProperty("_Mask") ? m.GetFloat("_Mask") : -1f;
+                    m.SetFloat("_Mask", mk);
+                    Utils.SendMessage($"ShadowQuad._Mask {cur:F0} → {mk} (タイルが暗くなれば fix・LI 方式)。スイープ: /bbshadow mask 15 / 1 / 31", pid);
+                }
+                else Utils.SendMessage("ShadowQuad/material 不在", pid);
+
+                break;
+            }
+            case "shaderdump":
+            {
+                // per-material 説の裏取り: バニラ船スプライト vs タイルの shader 名を比較
+                StringBuilder sd = new();
+                sd.AppendLine("=== shaderdump ===");
+                string shipShader = "(なし)";
+                foreach (Renderer rr in DisabledRenderers)
+                {
+                    if (rr == null) continue;
+                    SpriteRenderer ssr = rr.TryCast<SpriteRenderer>();
+                    if (ssr != null && ssr.sharedMaterial != null && ssr.sharedMaterial.shader != null) { shipShader = ssr.sharedMaterial.shader.name; break; }
+                }
+
+                string tileShader = "(なし)";
+                foreach (GameObject go in SpawnedTiles)
+                {
+                    if (go == null) continue;
+                    SpriteRenderer tsr = go.GetComponentInChildren<SpriteRenderer>(true);
+                    if (tsr != null && tsr.sharedMaterial != null && tsr.sharedMaterial.shader != null) { tileShader = tsr.sharedMaterial.shader.name; break; }
+                }
+
+                sd.AppendLine($"vanilla 船 sprite shader = {shipShader}");
+                sd.AppendLine($"Backrooms tile  shader = {tileShader}");
+                Logger.Info(sd.ToString(), "BBShadow");
+                Utils.SendMessage($"shaderdump: 船='{shipShader}' / タイル='{tileShader}' (ログにも)", pid);
+                break;
+            }
             default:
                 BackroomsShadow.Status(pid);
                 break;
