@@ -2151,6 +2151,15 @@ public static class BackroomsLobby
                 }
 
                 break;
+            case "inset":
+            {
+                // 影が壁から離れる調整: 裏面 caster を見える壁の面へ寄せる量。V=WallV(細い壁), H=WallH。
+                if (args is { Length: >= 3 } && float.TryParse(args[2], out float vi)) BackroomsCasters.VInset = vi;
+                if (args is { Length: >= 4 } && float.TryParse(args[3], out float hi)) BackroomsCasters.HInset = hi;
+                _occludersDirty = true; // 次フレ MaintainWallCasters が新 inset で caster を rebuild
+                Utils.SendMessage($"inset V={BackroomsCasters.VInset:F3} H={BackroomsCasters.HInset:F3} (大きいほど影が壁に密着・角が切れたら戻す)", pid);
+                break;
+            }
             case "quad":
             {
                 // 実験: ShadowQuad の sortingOrder を前に出して、タイルに覆われてるかテスト

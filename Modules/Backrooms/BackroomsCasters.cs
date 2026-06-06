@@ -28,6 +28,13 @@ public static class BackroomsCasters
 
     private static readonly List<GameObject> _casters = [];
 
+    // 裏面 caster をセル端から「部屋側 (= 見える壁の面)」へ寄せる量。影が壁から離れて見える不具合の調整つまみ。
+    //   VInset: WallV の caster を左端 (cx-0.5) から +VInset 右へ。0.275 で見える 0.45 幅壁の左面 (cx-0.225) に一致。
+    //   HInset: WallH の caster を上端 (cy+0.5) から HInset 下へ。0 = セル上端 (壁は上端まで埋まるので隙間なし)。
+    // /bbshadow inset <v> [h] で実機調整可。
+    public static float VInset = 0.275f;
+    public static float HInset = 0f;
+
     // 裏面エッジの作業バッファ (再利用で alloc 回避。Rebuild は _occludersDirty 時のみで per-frame ではない)。
     private static readonly List<(int line, int cell)> _hEdges = []; // 水平辺: line=2*yWorld (整数化), cell=x column
     private static readonly List<(int line, int cell)> _vEdges = []; // 垂直辺: line=2*xWorld (整数化), cell=y row
@@ -57,16 +64,17 @@ public static class BackroomsCasters
             }
         }
 
-        // 共線マージ → per-segment EdgeCollider2D
-        int hRuns = EmitRuns(_hEdges, horizontal: true);
-        int vRuns = EmitRuns(_vEdges, horizontal: false);
+        // 共線マージ → per-segment EdgeCollider2D。inset で部屋側へ寄せる (H は下へ -HInset、V は右へ +VInset)。
+        int hRuns = EmitRuns(_hEdges, horizontal: true, offset: -HInset);
+        int vRuns = EmitRuns(_vEdges, horizontal: false, offset: VInset);
 
         Logger.Info($"WallCasters rebuilt (back-edge): {_casters.Count} segs (hRun={hRuns} vRun={vRuns}) from H={hCells} V={vCells} cells", Tag);
     }
 
     // 同一 line 上で cell index が連続する境界辺を最大長 run にマージし、各 run を EdgeCollider2D として出す。
     // horizontal: line=2*yWorld 固定、cell=x column が連続。vertical はその逆 (line=2*xWorld 固定、cell=y row)。
-    private static int EmitRuns(List<(int line, int cell)> edges, bool horizontal)
+    // offset: 固定軸 world 座標に加える inset (部屋側へ寄せる)。
+    private static int EmitRuns(List<(int line, int cell)> edges, bool horizontal, float offset)
     {
         if (edges.Count == 0) return 0;
 
@@ -89,7 +97,7 @@ public static class BackroomsCasters
                 j++;
             }
 
-            float lineWorld = line * 0.5f; // 固定軸の world 座標 (2*world を整数化したので 0.5 倍で戻す)
+            float lineWorld = line * 0.5f + offset; // 固定軸の world 座標 (+ inset で部屋側へ)
             float lo = start - 0.5f;        // run 始端 (先頭セル中心 - 0.5)
             float hi = end + 0.5f;          // run 終端 (末尾セル中心 + 0.5)
             if (horizontal) SpawnSegment(new Vector2(lo, lineWorld), new Vector2(hi, lineWorld));
