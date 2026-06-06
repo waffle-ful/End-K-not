@@ -146,8 +146,10 @@ public static class BackroomsShadow
 
                 // ★診断: body center / camera / origin の関係 (camera-vs-player の真のオフセットを実測)
                 Vector3 camPos = mainCam != null ? mainCam.transform.position : Vector3.zero;
+                // ★診断: 二重壁 gating の active 面本数 (dark-walls 報告時 gating 未実行=0/0 vs 効いてない の切り分け)
+                (int gateHi, int gateLo) = BackroomsCasters.GateCounts();
                 Logger.Info(
-                    $"[driver] body=({body.x:F2},{body.y:F2}) cam=({camPos.x:F2},{camPos.y:F2}) off=({_originOffset.x:F2},{_originOffset.y:F2}) origin=({origin.x:F2},{origin.y:F2}) ortho={(mainCam != null ? mainCam.orthographicSize : 0):F1} viewDist={ls.ViewDistance:F1} | {hitsInfo} | OverlapShadowMask={omMask} OverlapLayer10={om10} | {lcInfo}",
+                    $"[driver] body=({body.x:F2},{body.y:F2}) cam=({camPos.x:F2},{camPos.y:F2}) off=({_originOffset.x:F2},{_originOffset.y:F2}) origin=({origin.x:F2},{origin.y:F2}) ortho={(mainCam != null ? mainCam.orthographicSize : 0):F1} viewDist={ls.ViewDistance:F1} | {hitsInfo} gateHi={gateHi} gateLo={gateLo} | OverlapShadowMask={omMask} OverlapLayer10={om10} | {lcInfo}",
                     Tag);
             }
         }

@@ -149,6 +149,19 @@ public static class BackroomsCasters
         return ec;
     }
 
+    // 診断: 現在 active な遠面の本数 (Hi 面 / Lo 面)。dark-walls 報告時に「gating 未実行 vs 効いてない」を切り分け。
+    public static (int hi, int lo) GateCounts()
+    {
+        int hi = 0, lo = 0;
+        foreach (RunCaster rc in _runs)
+        {
+            if (rc.State == 1) hi++;
+            else if (rc.State == -1) lo++;
+        }
+
+        return (hi, lo);
+    }
+
     // (x,y) 整数セルを long に詰める。x を上位 32bit、y を下位 32bit。
     private static long PackCell(int x, int y) => ((long)x << 32) ^ (uint)y;
 
