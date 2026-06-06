@@ -98,8 +98,13 @@ public static class BackroomsShadow
                 if (_shadowCamCam != null) _shadowCamCam.orthographicSize = mainCam.orthographicSize;
             }
 
-            // light origin は足元 (no-clip 127u trap 回避)。framing とは別アンカー。
-            r.Render(LocalPlayerFeet());
+            // light origin は body center (transform.position)。ShadowCamera は Camera.main(≒body center)に
+            // 追従するので、light origin も body center に合わせて両者のアンカーを一致させる。
+            //   足元 (-0.3636) で描くと cutaway が composite frame に対し 0.36 下にズレ、影が
+            //   プレイヤーの少し下から発射されて見えた (V/H 等しくズレる症状)。
+            //   no-clip trap は GetTruePosition(collider.offset=127) の話で transform.position は無関係 → 安全。
+            Vector3 body = lp.transform.position;
+            r.Render(new Vector2(body.x, body.y));
 
             ApplyDarkOverride();
             ApplyShadowMask(); // 毎フレ維持 (バニラが _Mask を戻す場合に備え)
@@ -109,7 +114,7 @@ public static class BackroomsShadow
             if (_diagTimer >= 1f)
             {
                 _diagTimer = 0f;
-                Vector2 feet = LocalPlayerFeet();
+                Vector2 origin = new(lp.transform.position.x, lp.transform.position.y); // light origin = body center (Render と一致)
                 string hitsInfo = "hits=?";
                 try
                 {
@@ -121,8 +126,8 @@ public static class BackroomsShadow
 
                 // ★診断: Physics2D が occluder を検出できているか (plain ロビー vs Backrooms 比較用)
                 int omMask = -1, om10 = -1;
-                try { Il2CppReferenceArray<Collider2D> f = Physics2D.OverlapCircleAll(feet, ls.ViewDistance, Constants.ShadowMask); omMask = f != null ? f.Length : -2; } catch { omMask = -3; }
-                try { Il2CppReferenceArray<Collider2D> f10 = Physics2D.OverlapCircleAll(feet, ls.ViewDistance, 1 << BackroomsConfig.ShadowCasterLayer); om10 = f10 != null ? f10.Length : -2; } catch { om10 = -3; }
+                try { Il2CppReferenceArray<Collider2D> f = Physics2D.OverlapCircleAll(origin, ls.ViewDistance, Constants.ShadowMask); omMask = f != null ? f.Length : -2; } catch { omMask = -3; }
+                try { Il2CppReferenceArray<Collider2D> f10 = Physics2D.OverlapCircleAll(origin, ls.ViewDistance, 1 << BackroomsConfig.ShadowCasterLayer); om10 = f10 != null ? f10.Length : -2; } catch { om10 = -3; }
 
                 // ★診断: LightChild (光の円メッシュ) の layer/active/scale — layer!=10 なら ShadowCamera が撮れず影が出ない真因
                 string lcInfo = "LightChild=NULL";
@@ -134,7 +139,7 @@ public static class BackroomsShadow
                 catch (Exception ex) { lcInfo = $"LightChild EXC {ex.Message}"; }
 
                 Logger.Info(
-                    $"[driver] feet=({feet.x:F2},{feet.y:F2}) ortho={(mainCam != null ? mainCam.orthographicSize : 0):F1} viewDist={ls.ViewDistance:F1} | {hitsInfo} | OverlapShadowMask={omMask} OverlapLayer10={om10} | {lcInfo}",
+                    $"[driver] origin=({origin.x:F2},{origin.y:F2}) ortho={(mainCam != null ? mainCam.orthographicSize : 0):F1} viewDist={ls.ViewDistance:F1} | {hitsInfo} | OverlapShadowMask={omMask} OverlapLayer10={om10} | {lcInfo}",
                     Tag);
             }
         }
