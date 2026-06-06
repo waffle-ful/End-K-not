@@ -5,22 +5,19 @@ using UnityEngine;
 namespace EndKnot.Modules;
 
 // ============================================================================
-// Backrooms 壁のシャドウキャスター生成 (Phase 2b: back-edge 方式)
+// Backrooms 壁のシャドウキャスター生成 (Phase 2b: 壁を囲む inset caster)
 //
-// 「オブジェクトの作りの違い」= バニラは影 caster を壁の見える**面の「裏」**に置く。光が面に届いて
-// 面が照らされ、裏の caster がそこから奥を遮蔽する。我々が試した「前面/全周」caster は壁タイル全体を
-// 影の umbra に落とす (= 壁が真っ黒)。直し = caster を壁の**裏面 1 辺**だけにする。
-//   ・WallH (壁紙の面が下向き・上に dark band) → 裏面 = **上辺** (y=cy+0.5)。下の部屋から面が見え奥が暗い。
-//   ・WallV (0.45 幅・面が右向き) → 裏面 = **左辺** (x=cx-0.5)。右の部屋から面が見え奥が暗い。
-//   ・H/V は AABB の縦横比で判別 (WallH=正方 halfX>=halfY / WallV=0.45 幅 halfX<halfY)。
-//   ・裏面は全て半整数グリッド線上で端点がグリッド頂点一致 → 別 collider でも端点共有で角が連結。
-//   ・同一直線で連続する裏面を最大長 run にマージ → per-segment layer10 EdgeCollider2D。
+// back-edge (壁の裏 1 辺) は「壁が全部光る」が、1 辺しか遮蔽しないため ①十字で光が漏れる
+// ②左右非対称 の 2 欠陥があった。これを直すため、壁の **床に面する 4 辺すべて** を caster にし、
+// かつ各辺を壁内部へ inset (壁の芯へ寄せる) する:
+//   ・閉じた囲い → 十字/角で透けない (full occlusion)。
+//   ・どの床側からも同じ → 左右対称。
+//   ・inset δ で「外側 δ ぶんの壁が光り、中心に幅 (1-2δ) の影の芯」。δ→0.5 で中心線(半分lit)。
 //
-// ※これは「単面」: 壁は面側から見ると照らされ、裏側から見ると暗い (部屋は 2 面 lit + 2 面 dark)。
-//   バニラは部屋ごとに壁=2 枚背中合わせ (全周 lit) なので完全一致ではない。まず「面の裏に caster=面が光る」
-//   機構を最小コストで画面検証する版。OK なら単面 vs 二重壁 (バニラ正確) をユーザーが選ぶ。
+// 床に面する辺だけ出す (隣が壁の内部辺は出さない) ので、壁同士の間で光は漏れない。
+// 「壁が全部光る (両面フル lit)」が欲しい場合は別途 壁スプライトの二重面化が要る (本家の二重壁方式)。
 //
-// per-segment 短 collider の理由: OverlapCircle は radius 圏内しか返さないので GPU の辺処理仕様に依存しない。
+// per-segment 短 collider の理由: OverlapCircle は radius 圏内しか返さないので GPU の辺処理仕様に非依存。
 // ============================================================================
 public static class BackroomsCasters
 {
@@ -28,78 +25,69 @@ public static class BackroomsCasters
 
     private static readonly List<GameObject> _casters = [];
 
-    // 裏面 caster をセル端から「部屋側 (= 見える壁の面)」へ寄せる量。影が壁から離れて見える不具合の調整つまみ。
-    //   VInset: WallV の caster を左端 (cx-0.5) から +VInset 右へ。0.275 で見える 0.45 幅壁の左面 (cx-0.225) に一致。
-    //   HInset: WallH の caster を上端 (cy+0.5) から HInset 下へ。0 = セル上端 (壁は上端まで埋まるので隙間なし)。
-    // /bbshadow inset <v> [h] で実機調整可。
-    public static float VInset = 0.275f;
-    public static float HInset = 0f;
+    // 床に面する各辺を壁の芯へ寄せる量 (0..0.49)。大きいほど光る壁が太く・影の芯が細い。0.5 で中心線。
+    // H=上下辺 (WallH 用)、V=左右辺 (WallV 用)。/bbshadow inset <v> [h] で実機調整。
+    public static float HInset = 0.42f;
+    public static float VInset = 0.48f;
 
-    // 裏面エッジの作業バッファ (再利用で alloc 回避。Rebuild は _occludersDirty 時のみで per-frame ではない)。
-    private static readonly List<(int line, int cell)> _hEdges = []; // 水平辺: line=2*yWorld (整数化), cell=x column
-    private static readonly List<(int line, int cell)> _vEdges = []; // 垂直辺: line=2*xWorld (整数化), cell=y row
+    // 占有格子 + 4 方向の床面バッファ (再利用で alloc 回避。Rebuild は _occludersDirty 時のみ)。
+    private static readonly HashSet<long> _cells = [];
+    private static readonly List<(int key, int cell)> _bottom = []; // 床が下: y=iy-0.5+HInset、x=cell 方向に連続
+    private static readonly List<(int key, int cell)> _top = [];    // 床が上: y=iy+0.5-HInset
+    private static readonly List<(int key, int cell)> _left = [];   // 床が左: x=ix-0.5+VInset、y=cell 方向に連続
+    private static readonly List<(int key, int cell)> _right = [];  // 床が右: x=ix+0.5-VInset
 
-    // WallAabbs (per-cell grid box) から壁の裏面 1 辺ずつ caster を作り直す。壁が cull/stream で変わった時だけ呼ぶ。
+    // WallAabbs (per-cell grid box) から壁を囲む inset caster を作り直す。壁が cull/stream で変わった時だけ呼ぶ。
     public static void Rebuild(List<(float cx, float cy, float halfX, float halfY)> wallCells)
     {
         Clear();
         if (wallCells == null || wallCells.Count == 0) return;
 
-        // 各壁セルの裏面 1 辺だけを出す。H/V は AABB 縦横比で判別。
-        _hEdges.Clear();
-        _vEdges.Clear();
-        int hCells = 0, vCells = 0;
+        // 占有格子 (中心を整数セルにスナップ。collider offset=0 なので RoundToInt が exact)
+        _cells.Clear();
+        foreach (var w in wallCells) _cells.Add(PackCell(Mathf.RoundToInt(w.cx), Mathf.RoundToInt(w.cy)));
+
+        // 床に面する辺のみ 4 方向バッファへ (隣が壁の内部辺は出さない = 壁同士の間で漏れない)
+        _bottom.Clear(); _top.Clear(); _left.Clear(); _right.Clear();
         foreach (var w in wallCells)
         {
             int ix = Mathf.RoundToInt(w.cx), iy = Mathf.RoundToInt(w.cy);
-            if (w.halfX < w.halfY) // WallV (0.45 幅) → 裏面 = 左辺 x=ix-0.5
-            {
-                _vEdges.Add((2 * ix - 1, iy));
-                vCells++;
-            }
-            else // WallH (正方) → 裏面 = 上辺 y=iy+0.5
-            {
-                _hEdges.Add((2 * iy + 1, ix));
-                hCells++;
-            }
+            if (!_cells.Contains(PackCell(ix, iy - 1))) _bottom.Add((iy, ix)); // 下が床
+            if (!_cells.Contains(PackCell(ix, iy + 1))) _top.Add((iy, ix));    // 上が床
+            if (!_cells.Contains(PackCell(ix - 1, iy))) _left.Add((ix, iy));   // 左が床
+            if (!_cells.Contains(PackCell(ix + 1, iy))) _right.Add((ix, iy));  // 右が床
         }
 
-        // 共線マージ → per-segment EdgeCollider2D。inset で部屋側へ寄せる (H は下へ -HInset、V は右へ +VInset)。
-        int hRuns = EmitRuns(_hEdges, horizontal: true, offset: -HInset);
-        int vRuns = EmitRuns(_vEdges, horizontal: false, offset: VInset);
+        float h = Mathf.Clamp(HInset, 0f, 0.49f);
+        float v = Mathf.Clamp(VInset, 0f, 0.49f);
+        int r = 0;
+        r += EmitFaceRuns(_bottom, horizontal: true, lineOffset: -0.5f + h); // y = iy-0.5+h
+        r += EmitFaceRuns(_top, horizontal: true, lineOffset: 0.5f - h);     // y = iy+0.5-h
+        r += EmitFaceRuns(_left, horizontal: false, lineOffset: -0.5f + v);  // x = ix-0.5+v
+        r += EmitFaceRuns(_right, horizontal: false, lineOffset: 0.5f - v);  // x = ix+0.5-v
 
-        Logger.Info($"WallCasters rebuilt (back-edge): {_casters.Count} segs (hRun={hRuns} vRun={vRuns}) from H={hCells} V={vCells} cells", Tag);
+        Logger.Info($"WallCasters rebuilt (inset H={h:F2} V={v:F2}): {_casters.Count} segs ({r} runs) from {_cells.Count} cells", Tag);
     }
 
-    // 同一 line 上で cell index が連続する境界辺を最大長 run にマージし、各 run を EdgeCollider2D として出す。
-    // horizontal: line=2*yWorld 固定、cell=x column が連続。vertical はその逆 (line=2*xWorld 固定、cell=y row)。
-    // offset: 固定軸 world 座標に加える inset (部屋側へ寄せる)。
-    private static int EmitRuns(List<(int line, int cell)> edges, bool horizontal, float offset)
+    // bucket: (key=固定軸セル index, cell=可変軸セル index)。固定軸 world = key + lineOffset、可変軸 span = cell±0.5。
+    // 同一 key 内で cell が連続する辺を最大長 run にマージ → per-segment EdgeCollider2D。
+    private static int EmitFaceRuns(List<(int key, int cell)> edges, bool horizontal, float lineOffset)
     {
         if (edges.Count == 0) return 0;
-
-        // line 昇順 → 同 line 内 cell 昇順 にソートして連続 run を線形検出
-        edges.Sort((a, b) => a.line != b.line ? a.line.CompareTo(b.line) : a.cell.CompareTo(b.cell));
+        edges.Sort((a, b) => a.key != b.key ? a.key.CompareTo(b.key) : a.cell.CompareTo(b.cell));
 
         int runs = 0;
         for (int i = 0; i < edges.Count;)
         {
-            int line = edges[i].line;
-            int start = edges[i].cell;
-            int end = start;
-            int j = i + 1;
-            // 同 line かつ cell が連続(+1) または 重複(<=end) の間だけ伸ばす。+1 連続でドア=gap は途切れ
-            // (光が漏れる)、重複吸収で WallAabbs に同セルが万一二重登録されても同一辺の二重 spawn
-            // (= この書換が消そうとしている degenerate double-edge) を防ぐ。
-            while (j < edges.Count && edges[j].line == line && edges[j].cell <= end + 1)
+            int key = edges[i].key, start = edges[i].cell, end = start, j = i + 1;
+            while (j < edges.Count && edges[j].key == key && edges[j].cell <= end + 1)
             {
                 if (edges[j].cell > end) end = edges[j].cell;
                 j++;
             }
 
-            float lineWorld = line * 0.5f + offset; // 固定軸の world 座標 (+ inset で部屋側へ)
-            float lo = start - 0.5f;        // run 始端 (先頭セル中心 - 0.5)
-            float hi = end + 0.5f;          // run 終端 (末尾セル中心 + 0.5)
+            float lineWorld = key + lineOffset;
+            float lo = start - 0.5f, hi = end + 0.5f;
             if (horizontal) SpawnSegment(new Vector2(lo, lineWorld), new Vector2(hi, lineWorld));
             else SpawnSegment(new Vector2(lineWorld, lo), new Vector2(lineWorld, hi));
 
@@ -126,6 +114,9 @@ public static class BackroomsCasters
         ec.points = arr;
         _casters.Add(go);
     }
+
+    // (x,y) 整数セルを long に詰める。x を上位 32bit、y を下位 32bit。
+    private static long PackCell(int x, int y) => ((long)x << 32) ^ (uint)y;
 
     public static int Clear()
     {

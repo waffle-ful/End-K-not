@@ -2153,11 +2153,11 @@ public static class BackroomsLobby
                 break;
             case "inset":
             {
-                // 影が壁から離れる調整: 裏面 caster を見える壁の面へ寄せる量。V=WallV(細い壁), H=WallH。
+                // 壁を囲む caster を壁の芯へ寄せる量 (0..0.49)。大きいほど光る壁が太く・影の芯が細い (0.5=中心線)。V=左右辺, H=上下辺。
                 if (args is { Length: >= 3 } && float.TryParse(args[2], out float vi)) BackroomsCasters.VInset = vi;
                 if (args is { Length: >= 4 } && float.TryParse(args[3], out float hi)) BackroomsCasters.HInset = hi;
                 _occludersDirty = true; // 次フレ MaintainWallCasters が新 inset で caster を rebuild
-                Utils.SendMessage($"inset V={BackroomsCasters.VInset:F3} H={BackroomsCasters.HInset:F3} (大きいほど影が壁に密着・角が切れたら戻す)", pid);
+                Utils.SendMessage($"inset V={BackroomsCasters.VInset:F3} H={BackroomsCasters.HInset:F3} (大=光る壁太い/芯細い・0.5で中心線)", pid);
                 break;
             }
             case "quad":
